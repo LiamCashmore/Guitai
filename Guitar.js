@@ -1,5 +1,6 @@
 const chromaticScale = ["A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#"];
 const majSeq = [2, 2, 1, 2, 2, 2, 1];
+const minSeq = [2, 1, 2, 2, 1, 2, 2]
 
 function getFretNotes(openNote, numFrets) {
   const startIndex = chromaticScale.indexOf(openNote);
@@ -46,29 +47,53 @@ function printNeck() {
 }
 
 function printScale(root, type) {
-    switch(type) {
-        case "major":
-            printMajorScale(root);
-            break;
-        
-        default:
-            break;
-    }
-}
+  let seq = []; 
+  switch(type) {
+      case "major":
+          seq = majSeq;
+          break;
+      case "minor":
+          seq = minSeq;
+          break;
+      default:
+          break;
+  }
 
-function printMajorScale(root) {
-    const startIndex = chromaticScale.indexOf(root);
-    const notes = [];
+   const startIndex = chromaticScale.indexOf(root);
+  const notes = [];
 
-    let curInterval = 0;
-    for (note = 0; note < 7; note++) {
-        const noteIndex = (startIndex + curInterval) % chromaticScale.length;
-        notes.push(chromaticScale[noteIndex]);
-        curInterval += majSeq[note];
-    }
-    console.log(notes);
+  let curInterval = 0;
+  for (note = 0; note < 7; note++) {
+      const noteIndex = (startIndex + curInterval) % chromaticScale.length;
+      notes.push(chromaticScale[noteIndex]);
+      curInterval += seq[note];
+  }
+    
+  const stringsReversed = [...strings].reverse(); // high e on top
+
+  // Print fret numbers on top
+  let header = "     ";
+  for (let fret = 0; fret <= numFrets; fret++) {
+    header += fret.toString().padEnd(5, " ");
+  }
+  console.log(header);
+
+  // Print each string as a row, using actual note names
+  stringsReversed.forEach((stringNotes) => {
+    let row = stringNotes[0].padEnd(2, " ") + "|";
+    stringNotes.forEach((note) => {
+      if (notes.includes(note)){
+        row += note.padEnd(4, " ") + "|";
+      } else {
+        row += "----|"
+      }
+    });
+    console.log(row);
+  });
+
+
 }
 
 printNeck();
-printMajorScale("D");
+printScale("C", "minor"); 
 
