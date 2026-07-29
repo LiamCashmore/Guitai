@@ -21,6 +21,7 @@ import {
   getPositions,
   getShapeGrid,
   supportsCaged,
+  findPath,
 } from "./music.js";
 
 // ---- Visual config ----------------------------------------
@@ -32,7 +33,32 @@ const FRET_W = 62, STR_GAP = 46, R = 15; // note-circle radius
 const boardW = PAD_L + numFrets * FRET_W + PAD_R;
 const boardH = PAD_T + (numStrings - 1) * STR_GAP + PAD_B;
 
-const FADE_MS = 240;   // must match the opacity transition in styles.css
+const FADE_MS  = 240;   // must match the opacity transition in styles.css
+const SLIDE_MS = 360;   // must match the transform transition in styles.css
+
+/**
+ * The same easing curve the CSS uses, evaluated in JS. The run's line is
+ * a list of points rather than a transform, so CSS can't move it — it has
+ * to be stepped by hand, and it should travel exactly as the notes it
+ * connects do.
+ */
+function cubicBezier(p1x, p1y, p2x, p2y) {
+  const cx = 3 * p1x, bx = 3 * (p2x - p1x) - cx, ax = 1 - cx - bx;
+  const cy = 3 * p1y, by = 3 * (p2y - p1y) - cy, ay = 1 - cy - by;
+  const atX = t => ((ax * t + bx) * t + cx) * t;
+  const atY = t => ((ay * t + by) * t + cy) * t;
+  const slope = t => (3 * ax * t + 2 * bx) * t + cx;
+  return x => {
+    let t = x;
+    for (let i = 0; i < 5; i++) {
+      const d = slope(t);
+      if (Math.abs(d) < 1e-6) break;
+      t -= (atX(t) - x) / d;
+    }
+    return atY(t);
+  };
+}
+const ease = cubicBezier(0.45, 0.03, 0.25, 1);
 
 const SVGNS = "http://www.w3.org/2000/svg";
 function el(tag, attrs) {
@@ -72,11 +98,23 @@ function playedSpan(grid, box) {
 let cagedOn  = false;
 let posIndex = 0;
 
+// Path mode: pick a note to start on, then one to finish on.
+let pathOn     = false;
+let pathFrom   = null;   // { string, fret }
+let pathTo     = null;
+let pathResult = null;   // { cells, cost } from findPath
+// Showing a position with PATH on traces the whole shape by default.
+// Clearing puts that aside so notes can be picked by hand instead.
+let skipAutoPath = false;
+
 // Live SVG layers, built once.
 let noteLayer = null;
+let pathLayer = null;
 let highlight = null;
 // key -> { group, circle, label }  for notes currently on screen
 const liveNotes = new Map();
+
+const cellId = c => `${c.string}:${c.fret}`;
 
 // ============================================================
 // STATIC BOARD  (drawn a single time)
@@ -145,6 +183,15 @@ function drawBoard() {
     svg.appendChild(lbl);
   });
 
+  // The run's connecting line sits under the note markers.
+  pathLayer = el("g", { id: "pathLayer" });
+  pathLine = el("polyline", {
+    points: "", fill: "none", stroke: "var(--root)", "stroke-width": 3,
+    "stroke-linecap": "round", "stroke-linejoin": "round", opacity: 0,
+  });
+  pathLayer.appendChild(pathLine);
+  svg.appendChild(pathLayer);
+
   noteLayer = el("g", { id: "noteLayer" });
   svg.appendChild(noteLayer);
 }
@@ -176,9 +223,20 @@ function renderNotes(grid, mode) {
     let rank = 0;
     row.forEach((cell, f) => {
       if (!cell) return;
-      wanted.set(`${s}:${rank++}`, { cell, x: fretX(f), y: stringY(s) });
+      wanted.set(`${s}:${rank++}`, { cell, x: fretX(f), y: stringY(s), string: s, fret: f });
     });
   });
+
+  // How each marker should look while a run is being built.
+  const onPath = new Set(pathResult ? pathResult.cells.map(cellId) : []);
+  const roleOf = (s, f) => {
+    if (!pathOn) return "";
+    const id = `${s}:${f}`;
+    if (pathFrom && cellId(pathFrom) === id) return "is-start";
+    if (pathTo   && cellId(pathTo)   === id) return "is-target";
+    if (onPath.has(id)) return "is-path";
+    return pathFrom ? "is-muted" : "";
+  };
 
   // Retire markers with nowhere to go.
   for (const [key, rec] of liveNotes) {
@@ -195,9 +253,18 @@ function renderNotes(grid, mode) {
     if (isNew) {
       rec = makeNote();
       rec.group.style.opacity = "0";
+      rec.group.addEventListener("click", () => {
+        if (suppressClick) { suppressClick = false; return; }
+        if (rec.pos) selectPathNote(rec.pos);
+      });
+      rec.group.addEventListener("pointerdown", e => {
+        if (rec.pos) beginDrag(e, rec.pos);
+      });
       noteLayer.appendChild(rec.group);
       liveNotes.set(key, rec);
     }
+    rec.pos = { string: want.string, fret: want.fret };
+    rec.group.setAttribute("class", `note ${roleOf(want.string, want.fret)}`.trim());
     // A brand-new marker is placed without transition so it fades in
     // where it belongs instead of flying in from the corner.
     if (isNew) rec.group.style.transition = "none";
@@ -220,10 +287,198 @@ function renderNotes(grid, mode) {
 }
 
 // ============================================================
+// PATH SELECTION
+// ============================================================
+
+// The notes currently on the board, as "string:fret" ids. When a
+// position is showing, this is the shape the run must stay inside.
+let visibleCells = null;
+
+// ---- Dragging an endpoint along its string ----------------
+let drag = null;   // { end: "from" | "to", string, moved }
+
+// Turn a pointer event into a coordinate inside the board.
+function boardPoint(evt) {
+  const svg = document.getElementById("board");
+  const pt = svg.createSVGPoint();
+  pt.x = evt.clientX;
+  pt.y = evt.clientY;
+  return pt.matrixTransform(svg.getScreenCTM().inverse());
+}
+
+// The scale note on this string nearest the pointer. Snapping to notes
+// rather than to frets means the endpoint only ever lands somewhere the
+// scale actually goes.
+function noteNearest(string, x) {
+  let best = null, bestGap = Infinity;
+  for (let f = 0; f <= numFrets; f++) {
+    if (!visibleCells || !visibleCells.has(`${string}:${f}`)) continue;
+    const gap = Math.abs(fretX(f) - x);
+    if (gap < bestGap) { bestGap = gap; best = f; }
+  }
+  return best;
+}
+
+function beginDrag(evt, cell) {
+  if (!pathOn || !pathFrom) return;
+  const end = pathFrom && cellId(pathFrom) === cellId(cell) ? "from"
+            : pathTo   && cellId(pathTo)   === cellId(cell) ? "to"
+            : null;
+  if (!end) return;
+  drag = { end, string: cell.string, moved: false };
+  evt.preventDefault();
+}
+
+function onDragMove(evt) {
+  if (!drag) return;
+  const fret = noteNearest(drag.string, boardPoint(evt).x);
+  if (fret === null) return;
+  const target = drag.end === "from" ? pathFrom : pathTo;
+  if (target.fret === fret) return;             // still on the same note
+
+  drag.moved = true;
+  const moved = { string: drag.string, fret };
+  if (drag.end === "from") pathFrom = moved; else pathTo = moved;
+
+  if (pathFrom && pathTo) {
+    const root = document.getElementById("root").value;
+    const type = document.getElementById("scale").value;
+    pathResult = findPath(root, type, pathFrom, pathTo, cagedOn ? visibleCells : null);
+  }
+  skipAutoPath = true;
+  render({ animate: false });                   // follow the pointer exactly
+}
+
+function endDrag() {
+  if (!drag) return;
+  const moved = drag.moved;
+  drag = null;
+  // A drag that actually moved shouldn't also register as a click.
+  if (moved) suppressClick = true;
+}
+let suppressClick = false;
+
+/**
+ * Clicking notes builds the run: the first pick is where it starts, the
+ * second where it ends. A third click begins a new run from there.
+ */
+function selectPathNote(cell) {
+  if (!pathOn) return;
+  if (!pathFrom || pathTo) {
+    pathFrom = cell; pathTo = null; pathResult = null;
+    skipAutoPath = true;              // a pick of your own takes over
+  } else if (cellId(cell) === cellId(pathFrom)) {
+    pathFrom = null; pathResult = null;               // clicked it again
+    skipAutoPath = true;
+  } else {
+    pathTo = cell;
+    const root = document.getElementById("root").value;
+    const type = document.getElementById("scale").value;
+    // With a position showing, the run is limited to that shape's notes.
+    pathResult = findPath(root, type, pathFrom, pathTo,
+                          cagedOn ? visibleCells : null);
+  }
+  render();
+}
+
+function clearPath() {
+  pathFrom = null; pathTo = null; pathResult = null;
+  skipAutoPath = false;
+}
+
+/**
+ * With a position on screen, PATH starts by tracing the whole shape —
+ * its lowest note up to its highest — since that is the run the position
+ * exists to teach. Clicking any note replaces it with a run of your own.
+ */
+function autoPathForPosition(root, type, grid) {
+  let lowest = null, highest = null;
+  grid.forEach((row, s) => row.forEach((cell, f) => {
+    if (!cell) return;
+    const here = { string: s, fret: f, midi: cell.midi };
+    if (!lowest  || here.midi < lowest.midi)  lowest  = here;
+    if (!highest || here.midi > highest.midi) highest = here;
+  }));
+  if (!lowest || !highest || lowest.midi === highest.midi) return;
+
+  pathFrom = { string: lowest.string,  fret: lowest.fret };
+  pathTo   = { string: highest.string, fret: highest.fret };
+  pathResult = findPath(root, type, pathFrom, pathTo, visibleCells);
+}
+
+// ---- The run's line ---------------------------------------
+let pathLine    = null;   // the <polyline>
+let linePoints  = [];     // where it is drawn right now
+let lineAnim    = null;   // in-flight animation handle
+
+const asPoints = pts => pts.map(p => `${p.x},${p.y}`).join(" ");
+
+// Line up two point lists so they can be blended. The shorter run holds
+// its last point, so the line grows or retracts from its far end rather
+// than every point scrambling at once.
+function padTo(points, length) {
+  if (points.length >= length) return points.slice(0, length);
+  const last = points[points.length - 1];
+  return points.concat(Array.from({ length: length - points.length }, () => ({ ...last })));
+}
+
+/**
+ * Draw the line joining the run, in playing order. Between positions it
+ * slides on the same curve as the notes; while a note is being dragged
+ * it tracks the pointer directly, with no easing to lag behind.
+ */
+function renderPathLine({ animate = true } = {}) {
+  if (!pathLine) {
+    pathLine = el("polyline", {
+      fill: "none", stroke: "var(--root)", "stroke-width": 3,
+      "stroke-linecap": "round", "stroke-linejoin": "round", opacity: 0,
+    });
+    pathLayer.appendChild(pathLine);
+  }
+  if (lineAnim) { cancelAnimationFrame(lineAnim); lineAnim = null; }
+
+  const target = (pathOn && pathResult)
+    ? pathResult.cells.map(c => ({ x: fretX(c.fret), y: stringY(c.string) }))
+    : [];
+
+  if (target.length === 0) {
+    pathLine.setAttribute("opacity", 0);
+    linePoints = [];
+    return;
+  }
+  pathLine.setAttribute("opacity", 0.55);
+
+  // Nothing to slide from, or sliding not wanted: place it outright.
+  if (!animate || linePoints.length === 0) {
+    linePoints = target;
+    pathLine.setAttribute("points", asPoints(target));
+    return;
+  }
+
+  const span = Math.max(linePoints.length, target.length);
+  const start = padTo(linePoints, span);
+  const end   = padTo(target, span);
+  const t0 = performance.now();
+
+  const step = now => {
+    const k = Math.min(1, (now - t0) / SLIDE_MS);
+    const e = ease(k);
+    const at = start.map((p, i) => ({
+      x: p.x + (end[i].x - p.x) * e,
+      y: p.y + (end[i].y - p.y) * e,
+    }));
+    pathLine.setAttribute("points", asPoints(at));
+    if (k < 1) lineAnim = requestAnimationFrame(step);
+    else { lineAnim = null; linePoints = target; pathLine.setAttribute("points", asPoints(target)); }
+  };
+  lineAnim = requestAnimationFrame(step);
+}
+
+// ============================================================
 // RENDER
 // ============================================================
 
-function render() {
+function render({ animate = true } = {}) {
   const root = document.getElementById("root").value;
   const type = document.getElementById("scale").value;
   const mode = document.getElementById("labels").value;
@@ -233,6 +488,7 @@ function render() {
 
   // 2) If position mode is active, reduce the grid to the current box.
   //    CAGED shapes for the natural modes, searched positions otherwise.
+  //    With PATH also on, the run is confined to whatever this box holds.
   let box = null, boxCount = 0;
   if (cagedOn) {
     const found = getPositions(root, type);
@@ -264,8 +520,36 @@ function render() {
     highlight.setAttribute("opacity", 0);
   }
 
-  // 4) Move the notes.
+  // 4) Remember what's on the board — a run may only use these notes.
+  visibleCells = new Set();
+  grid.forEach((row, s) => row.forEach((cell, f) => {
+    if (cell) visibleCells.add(`${s}:${f}`);
+  }));
+  // A run drawn before the position moved may no longer be playable here.
+  if (pathOn && pathFrom && !visibleCells.has(cellId(pathFrom))) clearPath();
+  if (pathOn && pathTo && !visibleCells.has(cellId(pathTo))) { pathTo = null; pathResult = null; }
+
+  // Nothing picked yet, and a shape is on screen: trace all of it.
+  if (pathOn && box && !pathFrom && !pathTo && !skipAutoPath) {
+    autoPathForPosition(root, type, grid);
+  }
+
+  // 5) Move the notes, then trace the run over them.
   renderNotes(grid, mode);
+  renderPathLine({ animate });
+
+  const pathLabel = document.getElementById("pathLabel");
+  if (pathLabel) {
+    if (!pathOn) pathLabel.textContent = "";
+    else if (!pathFrom) pathLabel.textContent = "click a note to start";
+    else if (!pathTo) pathLabel.textContent = "now click the note to reach";
+    else if (!pathResult) pathLabel.textContent = "no playable run between those";
+    else {
+      const frets = pathResult.cells.map(c => c.fret);
+      pathLabel.textContent =
+        `${pathResult.cells.length} notes · frets ${Math.min(...frets)}–${Math.max(...frets)}`;
+    }
+  }
 
   // 5) Readout + arrow availability.
   const posLabel = document.getElementById("posLabel");
@@ -307,6 +591,16 @@ function syncCagedControls() {
   btn.classList.toggle("active", cagedOn);
   btn.textContent = cagedOn ? `${name}: on` : name;
   nav.style.display = cagedOn ? "flex" : "none";
+
+  const pathBtn = document.getElementById("pathBtn");
+  const pathNav = document.getElementById("pathNav");
+  pathBtn.classList.toggle("active", pathOn);
+  pathBtn.textContent = pathOn ? "PATH: on" : "PATH";
+  pathBtn.title = cagedOn
+    ? "Trace a run inside the position on screen"
+    : "Pick a starting note and a target note to build a run";
+  pathNav.style.display = pathOn ? "flex" : "none";
+  document.getElementById("board").classList.toggle("picking", pathOn);
 }
 
 function initControls() {
@@ -323,10 +617,12 @@ function initControls() {
   });
   scaleSel.value = MAJOR_SCALE;
 
-  // Changing root or scale restarts at the lowest shape.
+  // Changing root or scale restarts at the lowest shape, and voids any
+  // run — its notes may not exist in the new scale.
   ["root", "scale"].forEach(id =>
     document.getElementById(id).addEventListener("change", () => {
       posIndex = 0;
+      clearPath();
       syncCagedControls();
       render();
     }));
@@ -335,14 +631,28 @@ function initControls() {
   document.getElementById("cagedBtn").addEventListener("click", () => {
     cagedOn = !cagedOn;
     posIndex = 0;
+    clearPath();
     syncCagedControls();
     render();
   });
+  document.getElementById("pathBtn").addEventListener("click", () => {
+    pathOn = !pathOn;
+    clearPath();
+    syncCagedControls();
+    render();
+  });
+  document.getElementById("clearPath").addEventListener("click", () => {
+    clearPath();
+    skipAutoPath = true;      // leave the board empty for hand-picking
+    render();
+  });
+
+  // Moving to another shape starts the run over.
   document.getElementById("prevPos").addEventListener("click", () => {
-    if (posIndex > 0) { posIndex--; render(); }
+    if (posIndex > 0) { posIndex--; clearPath(); render(); }
   });
   document.getElementById("nextPos").addEventListener("click", () => {
-    posIndex++; render();
+    posIndex++; clearPath(); render();
   });
 
   // Arrow keys cycle shapes when position mode is on.
@@ -352,6 +662,12 @@ function initControls() {
     if (e.key === "ArrowRight") { posIndex++; render(); }
     else if (e.key === "ArrowLeft") { if (posIndex > 0) { posIndex--; render(); } }
   });
+
+  // Dragging is tracked on the document so the pointer can stray off the
+  // note without the drag breaking.
+  document.addEventListener("pointermove", onDragMove);
+  document.addEventListener("pointerup", endDrag);
+  document.addEventListener("pointercancel", endDrag);
 
   syncCagedControls();
   render();

@@ -53,11 +53,36 @@ button {
 button:hover:not(:disabled) { background: #f4f4f4; }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-#cagedBtn.active {
+#cagedBtn.active,
+#pathBtn.active {
   background: var(--root);
   color: #fff;
   border-color: var(--root);
 }
+
+/* ---- Path mode ------------------------------------------- */
+#board.picking .note { cursor: pointer; }
+
+/* Notes not taking part in the run recede but stay visible. */
+.note.is-muted { opacity: 0.22 !important; }
+
+/* Endpoints get a ring so they read as chosen, not just coloured, and a
+   grab cursor because they can be dragged along their string. */
+.note.is-start .note-circle,
+.note.is-target .note-circle {
+  stroke: var(--text);
+  stroke-width: 3;
+}
+
+#board.picking .note.is-start,
+#board.picking .note.is-target { cursor: grab; }
+#board.picking .note.is-start:active,
+#board.picking .note.is-target:active { cursor: grabbing; }
+
+/* Nothing should be text-selected while dragging across the board. */
+#board.picking { user-select: none; -webkit-user-select: none; }
+
+.note.is-path .note-circle { stroke: var(--root); stroke-width: 3; }
 
 .caged-nav {
   display: none;              /* toggled to flex by JS */
