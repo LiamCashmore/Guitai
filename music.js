@@ -419,10 +419,10 @@ function boxIsPlayable(info) {
  * whole-tone box by one fret swaps a three-note low E string for a
  * two-note one, and that second shape is just as playable as the first.
  *
- * The tightest hand wins: a four-fret box is used wherever it keeps the
- * scale whole, falling back to five frets otherwise. Whatever the box
- * contains is shown, so a string carries four notes when they happen to
- * sit close enough together to finger consecutively.
+ * Both a four-fret and a five-fret hand are tried at every fret, and
+ * each one that produces a different set of notes is kept — the wider
+ * box is a real alternative fingering, not a worse copy of the tight
+ * one, so both are offered.
  *
  * Boxes are identified by the notes they hold rather than by their fret
  * bounds. Two windows one fret apart can land on exactly the same notes
@@ -441,35 +441,45 @@ export function generalPositions(root, type) {
       if (hi > numFrets) continue;
       const info = inspectBox(grid, pcs, lo, hi);
       if (!boxIsPlayable(info)) continue;
-      if (seen.has(info.key)) break;           // same notes as an earlier box
+      if (seen.has(info.key)) continue;        // same notes as an earlier box
       seen.add(info.key);
-      boxes.push({ shape: null, lo: info.lo, hi: info.hi, notes: info.notes });
-      break;                                   // tightest span wins
+      boxes.push({ shape: null, lo: info.lo, hi: info.hi, notes: info.notes, key: info.key });
     }
   }
-  return boxes;
+  return boxes.sort((a, b) => a.lo - b.lo || a.hi - b.hi);
 }
 
 /**
- * Positions for any scale: the CAGED shapes for the natural modes,
- * evenly spaced boxes for everything else. A CAGED shape whose four-fret
- * window would break the run is widened to five frets.
+ * Every playable position for a scale.
+ *
+ * The natural modes get the same full sweep as everything else — the
+ * five CAGED shapes are only a selection from it, and the boxes sitting
+ * between them are perfectly playable variations. Those CAGED shapes are
+ * still identified by name; the rest simply carry no name.
+ *
  * @returns {{system: "caged"|"position", boxes: Array}}
  */
 export function getPositions(root, type) {
-  if (!supportsCaged(type)) {
-    return { system: "position", boxes: generalPositions(root, type) };
-  }
+  const boxes = generalPositions(root, type);
+  if (!supportsCaged(type)) return { system: "position", boxes };
+
+  // Work out which of those boxes ARE the CAGED shapes, by comparing the
+  // notes they hold rather than their fret bounds.
   const grid = buildScaleGrid(root, type);
   const pcs  = new Set(getScalePcs(noteToPc(root), type));
+  const shapeByKey = new Map();
 
-  const boxes = cagedPositions(root, type).map(b => {
-    let info = inspectBox(grid, pcs, b.lo, b.hi);
+  for (const shape of cagedPositions(root, type)) {
+    let info = inspectBox(grid, pcs, shape.lo, shape.hi);
     if (info.gaps > 0) {                       // widen a fret to close it
-      const wider = inspectBox(grid, pcs, b.lo, Math.min(b.hi + 1, numFrets));
+      const wider = inspectBox(grid, pcs, shape.lo, Math.min(shape.hi + 1, numFrets));
       if (wider.gaps === 0) info = wider;
     }
-    return { shape: b.shape, lo: info.lo, hi: info.hi, notes: info.notes };
-  });
-  return { system: "caged", boxes };
+    if (boxIsPlayable(info)) shapeByKey.set(info.key, shape.shape);
+  }
+
+  return {
+    system: "caged",
+    boxes: boxes.map(b => ({ ...b, shape: shapeByKey.get(b.key) ?? null })),
+  };
 }
