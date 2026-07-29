@@ -3,6 +3,10 @@
 //
 // Imports the pure model from music.js and draws it. Swapping this
 // file for a React Native renderer later would leave music.js intact.
+//
+// The board is drawn once. Note markers persist between renders and are
+// moved rather than rebuilt, so cycling positions slides them along the
+// strings instead of blinking them in and out.
 // ============================================================
 
 import {
@@ -27,6 +31,8 @@ const PAD_L = 70, PAD_T = 44, PAD_R = 30, PAD_B = 24;
 const FRET_W = 62, STR_GAP = 46, R = 15; // note-circle radius
 const boardW = PAD_L + numFrets * FRET_W + PAD_R;
 const boardH = PAD_T + (numStrings - 1) * STR_GAP + PAD_B;
+
+const FADE_MS = 240;   // must match the opacity transition in styles.css
 
 const SVGNS = "http://www.w3.org/2000/svg";
 function el(tag, attrs) {
@@ -66,35 +72,17 @@ function playedSpan(grid, box) {
 let cagedOn  = false;
 let posIndex = 0;
 
+// Live SVG layers, built once.
+let noteLayer = null;
+let highlight = null;
+// key -> { group, circle, label }  for notes currently on screen
+const liveNotes = new Map();
+
 // ============================================================
-// RENDER  (loops the scale grid from music.js)
+// STATIC BOARD  (drawn a single time)
 // ============================================================
 
-function render() {
-  const root = document.getElementById("root").value;
-  const type = document.getElementById("scale").value;
-  const mode = document.getElementById("labels").value;
-
-  // 1) Build the scale's own grid.
-  let grid = buildScaleGrid(root, type);
-
-  // 2) If position mode is active, reduce the grid to the current box.
-  //    CAGED shapes for the natural modes, searched positions otherwise.
-  let box = null, boxCount = 0, system = "position";
-  if (cagedOn) {
-    const found = getPositions(root, type);
-    system = found.system;
-    boxCount = found.boxes.length;
-    if (boxCount > 0) {
-      // Clamp rather than wrap: the cycle stops at each end of the neck.
-      posIndex = Math.max(0, Math.min(posIndex, boxCount - 1));
-      box = found.boxes[posIndex];
-      // Masked to the box, then stripped of unisons and out-of-reach
-      // notes so what's drawn is playable as written.
-      grid = getShapeGrid(root, type, box);
-    }
-  }
-
+function drawBoard() {
   const svg = document.getElementById("board");
   svg.setAttribute("viewBox", `0 0 ${boardW} ${boardH}`);
   svg.setAttribute("width", boardW);
@@ -116,11 +104,18 @@ function render() {
     if (f > numFrets) return;
     svg.appendChild(el("circle", { cx: PAD_L + (f - 0.5) * FRET_W, cy: midY, r: 6, fill: "#d8bd90" }));
   });
-  [ -1, 1 ].forEach(off => {
+  [-1, 1].forEach(off => {
     svg.appendChild(el("circle", {
       cx: PAD_L + (doubleMarker - 0.5) * FRET_W, cy: midY + off * STR_GAP, r: 6, fill: "#d8bd90"
     }));
   });
+
+  // The position highlight lives under the notes and slides with them.
+  highlight = el("rect", {
+    id: "posHighlight", x: 0, y: topY - 24, width: 0, height: (botY - topY) + 48,
+    rx: 8, fill: "var(--root)", opacity: 0
+  });
+  svg.appendChild(highlight);
 
   // Fret wires + numbers
   for (let f = 0; f <= numFrets; f++) {
@@ -145,49 +140,140 @@ function render() {
       x1: PAD_L, y1: y, x2: PAD_L + numFrets * FRET_W, y2: y,
       stroke: "var(--string)", "stroke-width": 1 + (numStrings - 1 - i) * 0.4
     }));
-    // open-string label (standard tuning name)
     const lbl = el("text", { x: PAD_L - 52, y: y + 4, "font-size": 13, fill: "#666", "font-weight": 600 });
     lbl.textContent = tuning[i];
     svg.appendChild(lbl);
   });
 
-  // Highlight the position, trimmed to the frets it actually reaches.
+  noteLayer = el("g", { id: "noteLayer" });
+  svg.appendChild(noteLayer);
+}
+
+// ============================================================
+// NOTES  (diffed against what is already on screen)
+// ============================================================
+
+function makeNote() {
+  const group  = el("g", { class: "note" });
+  const circle = el("circle", { class: "note-circle", cx: 0, cy: 0, r: R,
+                                stroke: "#fff", "stroke-width": 2 });
+  const label  = el("text", { class: "note-label", x: 0, y: 4,
+                              "text-anchor": "middle", "font-weight": 700, fill: "#fff" });
+  group.appendChild(circle);
+  group.appendChild(label);
+  return { group, circle, label };
+}
+
+/**
+ * Notes are keyed by string and by their order along that string, so a
+ * position change moves each marker to the next fret on the same string
+ * rather than destroying and recreating it. That is what produces the
+ * slide; markers with no counterpart in the new position fade out.
+ */
+function renderNotes(grid, mode) {
+  const wanted = new Map();
+  grid.forEach((row, s) => {
+    let rank = 0;
+    row.forEach((cell, f) => {
+      if (!cell) return;
+      wanted.set(`${s}:${rank++}`, { cell, x: fretX(f), y: stringY(s) });
+    });
+  });
+
+  // Retire markers with nowhere to go.
+  for (const [key, rec] of liveNotes) {
+    if (wanted.has(key)) continue;
+    liveNotes.delete(key);
+    rec.group.style.opacity = "0";
+    setTimeout(() => rec.group.remove(), FADE_MS);
+  }
+
+  // Place or move the rest.
+  for (const [key, want] of wanted) {
+    let rec = liveNotes.get(key);
+    const isNew = !rec;
+    if (isNew) {
+      rec = makeNote();
+      rec.group.style.opacity = "0";
+      noteLayer.appendChild(rec.group);
+      liveNotes.set(key, rec);
+    }
+    // A brand-new marker is placed without transition so it fades in
+    // where it belongs instead of flying in from the corner.
+    if (isNew) rec.group.style.transition = "none";
+    rec.group.style.transform = `translate(${want.x}px, ${want.y}px)`;
+
+    const text = mode === "degree" ? want.cell.degree : want.cell.name;
+    rec.label.textContent = text;
+    rec.label.setAttribute("font-size", text.length > 2 ? 10 : 12);
+    rec.circle.setAttribute("fill", want.cell.isRoot ? "var(--root)" : "var(--note)");
+
+    if (isNew) {
+      requestAnimationFrame(() => {
+        rec.group.style.transition = "";
+        rec.group.style.opacity = "1";
+      });
+    } else {
+      rec.group.style.opacity = "1";
+    }
+  }
+}
+
+// ============================================================
+// RENDER
+// ============================================================
+
+function render() {
+  const root = document.getElementById("root").value;
+  const type = document.getElementById("scale").value;
+  const mode = document.getElementById("labels").value;
+
+  // 1) Build the scale's own grid.
+  let grid = buildScaleGrid(root, type);
+
+  // 2) If position mode is active, reduce the grid to the current box.
+  //    CAGED shapes for the natural modes, searched positions otherwise.
+  let box = null, boxCount = 0;
+  if (cagedOn) {
+    const found = getPositions(root, type);
+    boxCount = found.boxes.length;
+    if (boxCount > 0) {
+      posIndex = Math.max(0, Math.min(posIndex, boxCount - 1));
+      box = found.boxes[posIndex];
+      grid = getShapeGrid(root, type, box);
+    }
+  }
+
+  // 3) Slide the highlight to the frets in play.
   const span = box ? playedSpan(grid, box) : null;
   if (span) {
     const x1 = span.lo === 0 ? PAD_L - 52 : PAD_L + (span.lo - 1) * FRET_W;
     const x2 = PAD_L + span.hi * FRET_W;
-    svg.appendChild(el("rect", {
-      x: x1, y: topY - 24, width: x2 - x1, height: (botY - topY) + 48,
-      rx: 8, fill: "var(--root)", opacity: 0.12
-    }));
+    // First reveal jumps into place; later moves glide.
+    if (highlight.getAttribute("opacity") === "0") {
+      highlight.style.transition = "none";
+      highlight.setAttribute("x", x1);
+      highlight.setAttribute("width", x2 - x1);
+      requestAnimationFrame(() => { highlight.style.transition = ""; });
+    } else {
+      highlight.setAttribute("x", x1);
+      highlight.setAttribute("width", x2 - x1);
+    }
+    highlight.setAttribute("opacity", 0.12);
+  } else {
+    highlight.setAttribute("opacity", 0);
   }
 
-  // 3) Draw notes by looping the scale grid.
-  grid.forEach((row, i) => {
-    row.forEach((cell, f) => {
-      if (!cell) return;
-      const cx = fretX(f), cy = stringY(i);
-      svg.appendChild(el("circle", {
-        cx, cy, r: R,
-        fill: cell.isRoot ? "var(--root)" : "var(--note)",
-        stroke: "#fff", "stroke-width": 2
-      }));
-      const label = mode === "degree" ? cell.degree : cell.name;
-      const t = el("text", { x: cx, y: cy + 4, "text-anchor": "middle",
-        "font-size": label.length > 2 ? 10 : 12, fill: "#fff", "font-weight": 700 });
-      t.textContent = label;
-      svg.appendChild(t);
-    });
-  });
+  // 4) Move the notes.
+  renderNotes(grid, mode);
 
-  // Position readout + arrow availability
+  // 5) Readout + arrow availability.
   const posLabel = document.getElementById("posLabel");
   if (posLabel) {
     if (!box) {
       posLabel.textContent = cagedOn ? "no playable position found" : "";
     } else {
       const shape = box.shape ? `${box.shape} shape · ` : "";
-      // Report the frets in play, which can be narrower than the box.
       const lo = span ? span.lo : box.lo;
       const hi = span ? span.hi : box.hi;
       posLabel.textContent =
@@ -259,7 +345,7 @@ function initControls() {
     posIndex++; render();
   });
 
-  // Arrow keys cycle shapes when CAGED is on (unless a dropdown is focused).
+  // Arrow keys cycle shapes when position mode is on.
   document.addEventListener("keydown", e => {
     if (!cagedOn) return;
     if (document.activeElement && document.activeElement.tagName === "SELECT") return;
@@ -271,4 +357,5 @@ function initControls() {
   render();
 }
 
+drawBoard();
 initControls();
