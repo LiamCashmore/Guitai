@@ -1,128 +1,115 @@
+// ============================================================
+// Music theory layer
+// ============================================================
 
 const chromaticScale = ["A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#"];
 
-const majSeq = [2, 2, 1, 2, 2, 2, 1];
-const minSeq = [2, 1, 2, 2, 1, 2, 2];
-
-const minPent = [3, 2, 2, 2, 2];
-const majPent = [2, 2, 3, 2, 3];
-
-
+// Interval sequences (semitone steps). Each sums to 12 (a full octave).
+const scaleFormulas = {
+  "major":            [2, 2, 1, 2, 2, 2, 1],
+  "minor":            [2, 1, 2, 2, 1, 2, 2],
+  "major pentatonic": [2, 2, 3, 2, 3],
+  "minor pentatonic": [3, 2, 2, 3, 2],
+};
 
 /**
- * Maps out string notes on fretboard 
- * given string tuning (openNote) and scale length (numFrets)
- * param {*} openNote 
- * param {*} numFrets 
+ * Notes on a single string, from open (fret 0) to numFrets.
+ * @param {string} openNote  tuning of the string, e.g. "E"
+ * @param {number} numFrets
  */
 function getFretNotes(openNote, numFrets) {
   const startIndex = chromaticScale.indexOf(openNote);
   const notes = [];
-
   for (let fret = 0; fret <= numFrets; fret++) {
-    const noteIndex = (startIndex + fret) % chromaticScale.length; // restarts note sequence if > 12 notes 
+    const noteIndex = (startIndex + fret) % chromaticScale.length; // wrap past 12
     notes.push(chromaticScale[noteIndex]);
   }
-
   return notes;
 }
 
-
 /**
- * Prints fretboard grid and all respective notes
+ * The set of pitch classes belonging to a scale.
+ * @param {string} root  e.g. "G#"
+ * @param {string} type  key in scaleFormulas
+ * @returns {string[]}   ordered notes of the scale (root first)
  */
-function printNeck() {
-  const stringsReversed = [...strings].reverse(); // high e on top
-
-  // Print fret numbers on top
-  let header = "     ";
-  for (let fret = 0; fret <= numFrets; fret++) {
-    header += fret.toString().padEnd(5, " ");
-  }
-  console.log(header);
-
-  // Print each string as a row, using actual note names
-  stringsReversed.forEach((stringNotes) => {
-    let row = stringNotes[0].padEnd(2, " ") + "|";
-    stringNotes.forEach((note) => {
-      row += note.padEnd(4, " ") + "|";
-    });
-    console.log(row);
-  });
-}
-
-
-/**
- * Prints all notes associated with 
- * a given scale and a given root on entire neck
- * 
- * param {*} root 
- * param {*} type 
- */
-function printScale(root, type) {
-  let seq = []; 
-  switch(type) {
-      case "major":
-          seq = majSeq;
-          break;
-      case "minor":
-          seq = minSeq;
-          break;
-      case "major pentatonic":
-          seq = majPent;
-          break;
-      case "minor pentatonic":
-          seq = minPent;
-          break;
-      default:
-          break;
-  }
+function getScaleNotes(root, type) {
+  const seq = scaleFormulas[type];
+  if (!seq) throw new Error(`Unknown scale type: "${type}"`);
 
   const startIndex = chromaticScale.indexOf(root);
-  const notes = [];
+  if (startIndex === -1) throw new Error(`Unknown root note: "${root}"`);
 
-  let curInterval = 0;
-  for (note = 0; note < 7; note++) {
-      const noteIndex = (startIndex + curInterval) % chromaticScale.length;
-      notes.push(chromaticScale[noteIndex]);
-      curInterval += seq[note];
+  const notes = [];
+  let interval = 0;
+  for (let i = 0; i < seq.length; i++) {
+    notes.push(chromaticScale[(startIndex + interval) % chromaticScale.length]);
+    interval += seq[i];
   }
-    
+  return notes;
+}
+
+// ============================================================
+// Rendering layer  (one renderer, scale = optional filter)
+// ============================================================
+
+/**
+ * Prints the fretboard. If `highlight` is given, only those notes show;
+ * every other position renders as a blank fret. The root is marked with ().
+ *
+ * @param {string[][]} strings          per-string note arrays (low -> high)
+ * @param {number}     numFrets
+ * @param {object}     [opts]
+ * @param {Set<string>} [opts.highlight] notes to display (undefined = show all)
+ * @param {string}     [opts.root]       note to emphasize, e.g. "G#"
+ */
+function renderNeck(strings, numFrets, opts = {}) {
+  const { highlight, root } = opts;
   const stringsReversed = [...strings].reverse(); // high e on top
 
-  // Print fret numbers on top
-  let header = "     ";
+  // Fret-number header
+  let header = "      ";
   for (let fret = 0; fret <= numFrets; fret++) {
     header += fret.toString().padEnd(5, " ");
   }
   console.log(header);
 
-  // Print each string as a row, using actual note names
   stringsReversed.forEach((stringNotes) => {
-    let row = stringNotes[0].padEnd(2, " ") + "|";
+    let row = stringNotes[0].padEnd(2, " ") + " |";
     stringNotes.forEach((note) => {
-      if (notes.includes(note)){
-        row += note.padEnd(4, " ") + "|";
+      const show = !highlight || highlight.has(note);
+      if (!show) {
+        row += "----|";
       } else {
-        row += "----|"
+        const label = note === root ? `(${note})` : note; // emphasize root
+        row += label.padEnd(4, " ") + "|";
       }
     });
     console.log(row);
   });
+  console.log(""); // spacer
 }
+
+/** All notes across the neck. */
+function printNeck(strings, numFrets) {
+  renderNeck(strings, numFrets);
+}
+
+/** Only the notes of a scale, root emphasized. */
+function printScale(strings, numFrets, root, type) {
+  const scaleNotes = getScaleNotes(root, type);
+  console.log(`${root} ${type}:  ${scaleNotes.join("  ")}`);
+  renderNeck(strings, numFrets, { highlight: new Set(scaleNotes), root });
+}
+
+// ============================================================
+// Config + demo
+// ============================================================
 
 const numFrets = 12;
 
-const strings = [
-  getFretNotes("E", numFrets), // low E string
-  getFretNotes("A", numFrets), // A string
-  getFretNotes("D", numFrets), // D string
-  getFretNotes("G", numFrets), // G string
-  getFretNotes("B", numFrets), // B string
-  getFretNotes("E", numFrets), // high e string
-];
+const standardTuning = ["E", "A", "D", "G", "B", "E"]; // low -> high
+const strings = standardTuning.map((open) => getFretNotes(open, numFrets));
 
-
-printNeck();
-printScale("G", "minor pentatonic"); 
-
+printNeck(strings, numFrets);
+printScale(strings, numFrets, "G#", "major");
