@@ -81,11 +81,16 @@ const scaleFormulas = {
   "Diminished (H-W)":        [1,2,1,2,1,2,1,2],
   "Augmented":               [3,1,3,1,3,1],
 
-  // Bebop (8-note, added passing tone)
-  "Bebop Dominant":          [2,2,1,2,2,1,1,1],
-  "Bebop Major":             [2,2,1,2,1,1,2,1],
-  "Bebop Dorian":            [2,1,1,1,2,2,1,2],
-  "Bebop Melodic Minor":     [2,1,2,2,1,1,2,1],
+  // Bebop (8-note: a seven-note scale plus one chromatic passing tone,
+  // placed so chord tones land on the beat when the scale is run in
+  // eighth notes — which is the whole point of them)
+  "Bebop Dominant":          [2,2,1,2,2,1,1,1],   // Mixolydian + natural 7
+  "Bebop Major":             [2,2,1,2,1,1,2,1],   // Ionian + #5
+  "Bebop Dorian":            [2,1,1,1,2,2,1,2],   // Dorian + natural 3
+  "Bebop Melodic Minor":     [2,1,2,2,1,1,2,1],   // melodic minor + #5
+  "Bebop Harmonic Minor":    [2,1,2,2,1,2,1,1],   // natural minor + natural 7
+  "Bebop Half-Diminished":   [1,2,2,1,1,1,2,2],   // Locrian + natural 5
+  "Bebop Dominant b9":       [1,3,1,2,1,2,1,1],   // Phrygian dominant + natural 7
 
   // Exotic
   "Hungarian Minor":         [2,1,3,1,1,3,1],
@@ -102,7 +107,7 @@ export const scaleGroups = {
   "Harmonic Major":       ["Harmonic Major"],
   "Pentatonic & Blues":   ["Major Pentatonic","Minor Pentatonic","Minor Blues","Major Blues"],
   "Symmetric":            ["Whole Tone","Diminished (W-H)","Diminished (H-W)","Augmented"],
-  "Bebop":                ["Bebop Dominant","Bebop Major","Bebop Dorian","Bebop Melodic Minor"],
+  "Bebop":                ["Bebop Dominant","Bebop Major","Bebop Dorian","Bebop Melodic Minor","Bebop Harmonic Minor","Bebop Half-Diminished","Bebop Dominant b9"],
   "Exotic":               ["Hungarian Minor","Double Harmonic","Neapolitan Minor","Neapolitan Major"],
 };
 
@@ -125,6 +130,9 @@ const explicitDegrees = {
   "Bebop Major":         ["1","2","3","4","5","#5","6","7"],
   "Bebop Dorian":        ["1","2","b3","3","4","5","6","b7"],
   "Bebop Melodic Minor": ["1","2","b3","4","5","#5","6","7"],
+  "Bebop Harmonic Minor":["1","2","b3","4","5","b6","b7","7"],
+  "Bebop Half-Diminished":["1","b2","b3","4","b5","5","b6","b7"],
+  "Bebop Dominant b9":   ["1","b2","3","4","5","b6","b7","7"],
 };
 
 // Degree labels for a scale, in the same order as getScalePcs.
@@ -515,6 +523,33 @@ export function findPath(root, type, from, to, only = null) {
     }
   }
   return searchPath(root, type, from, to, only, null);
+}
+
+/**
+ * A run that must pass through given notes on the way.
+ *
+ * Each leg is solved on its own and the legs are stitched together. A
+ * waypoint doesn't change which notes the run plays — the endpoints fix
+ * that — it decides which string plays one of them, which is how a
+ * fingering gets reshaped without altering the music.
+ *
+ * @param {Array<{string:number, fret:number}>} points  start, waypoints…, end
+ */
+export function findPathThrough(root, type, points, only = null) {
+  const cells = [];
+  let cost = 0;
+  for (let i = 0; i + 1 < points.length; i++) {
+    const leg = findPath(root, type, points[i], points[i + 1], only);
+    if (!leg) return null;
+    cells.push(...(i === 0 ? leg.cells : leg.cells.slice(1)));
+    cost += leg.cost;
+  }
+  return cells.length ? { cells, cost } : null;
+}
+
+/** Absolute pitch of a fretboard cell. */
+export function pitchAt(cell) {
+  return openMidi[cell.string] + cell.fret;
 }
 
 // The search proper. `window`, when given, confines every note to one

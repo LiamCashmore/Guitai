@@ -21,7 +21,8 @@ import {
   getPositions,
   getShapeGrid,
   supportsCaged,
-  findPath,
+  findPathThrough,
+  pitchAt,
 } from "./music.js";
 
 // ---- Visual config ----------------------------------------
@@ -102,7 +103,8 @@ let posIndex = 0;
 let pathOn     = false;
 let pathFrom   = null;   // { string, fret }
 let pathTo     = null;
-let pathResult = null;   // { cells, cost } from findPath
+let pathVia    = null;   // a note the run is pinned through
+let pathResult = null;   // { cells, cost } from findPathThrough
 // Showing a position with PATH on traces the whole shape by default.
 // Clearing puts that aside so notes can be picked by hand instead.
 let skipAutoPath = false;
@@ -178,7 +180,13 @@ function drawBoard() {
       x1: PAD_L, y1: y, x2: PAD_L + numFrets * FRET_W, y2: y,
       stroke: "var(--string)", "stroke-width": 1 + (numStrings - 1 - i) * 0.4
     }));
-    const lbl = el("text", { x: PAD_L - 52, y: y + 4, "font-size": 13, fill: "#666", "font-weight": 600 });
+    // Sat exactly where the open-note marker goes, so the tuning shows
+    // through when that note is out of the scale and is hidden beneath
+    // the marker when it is in — the notes draw on top of the board.
+    const lbl = el("text", {
+      x: fretX(0), y: y + 4, "text-anchor": "middle",
+      "font-size": 13, fill: "#666", "font-weight": 600,
+    });
     lbl.textContent = tuning[i];
     svg.appendChild(lbl);
   });
@@ -234,6 +242,7 @@ function renderNotes(grid, mode) {
     const id = `${s}:${f}`;
     if (pathFrom && cellId(pathFrom) === id) return "is-start";
     if (pathTo   && cellId(pathTo)   === id) return "is-target";
+    if (pathVia  && cellId(pathVia)  === id) return "is-via";
     if (onPath.has(id)) return "is-path";
     return pathFrom ? "is-muted" : "";
   };
@@ -294,8 +303,25 @@ function renderNotes(grid, mode) {
 // position is showing, this is the shape the run must stay inside.
 let visibleCells = null;
 
-// ---- Dragging an endpoint along its string ----------------
-let drag = null;   // { end: "from" | "to", string, moved }
+// Work out the run for the notes currently chosen.
+function recomputePath() {
+  if (!pathFrom || !pathTo) { pathResult = null; return; }
+  const root = document.getElementById("root").value;
+  const type = document.getElementById("scale").value;
+  const stops = pathVia ? [pathFrom, pathVia, pathTo] : [pathFrom, pathTo];
+  const found = findPathThrough(root, type, stops, cagedOn ? visibleCells : null);
+  // A waypoint the run can't honour is dropped rather than left blocking.
+  if (!found && pathVia) {
+    pathVia = null;
+    pathResult = findPathThrough(root, type, [pathFrom, pathTo], cagedOn ? visibleCells : null);
+  } else {
+    pathResult = found;
+  }
+}
+
+// ---- Dragging any note of the run -------------------------
+let drag = null;           // { role: "from" | "to" | "via", moved }
+let suppressClick = false;
 
 // Turn a pointer event into a coordinate inside the board.
 function boardPoint(evt) {
@@ -306,46 +332,66 @@ function boardPoint(evt) {
   return pt.matrixTransform(svg.getScreenCTM().inverse());
 }
 
-// The scale note on this string nearest the pointer. Snapping to notes
-// rather than to frets means the endpoint only ever lands somewhere the
-// scale actually goes.
-function noteNearest(string, x) {
+// The scale note nearest the pointer, on any string. Snapping to notes
+// rather than to coordinates means a dragged note only ever lands
+// somewhere the scale actually goes.
+function cellNearest(x, y) {
   let best = null, bestGap = Infinity;
-  for (let f = 0; f <= numFrets; f++) {
-    if (!visibleCells || !visibleCells.has(`${string}:${f}`)) continue;
-    const gap = Math.abs(fretX(f) - x);
-    if (gap < bestGap) { bestGap = gap; best = f; }
+  for (let s = 0; s < numStrings; s++) {
+    for (let f = 0; f <= numFrets; f++) {
+      if (!visibleCells || !visibleCells.has(`${s}:${f}`)) continue;
+      const dx = fretX(f) - x, dy = stringY(s) - y;
+      const gap = dx * dx + dy * dy;
+      if (gap < bestGap) { bestGap = gap; best = { string: s, fret: f }; }
+    }
   }
   return best;
 }
 
+/**
+ * Any note of the run can be taken hold of. The two ends decide which
+ * notes the run covers; everything between is a waypoint, which decides
+ * only which string a note is played on.
+ */
 function beginDrag(evt, cell) {
   if (!pathOn || !pathFrom) return;
-  const end = pathFrom && cellId(pathFrom) === cellId(cell) ? "from"
-            : pathTo   && cellId(pathTo)   === cellId(cell) ? "to"
-            : null;
-  if (!end) return;
-  drag = { end, string: cell.string, moved: false };
+  const id = cellId(cell);
+  let role = null;
+  if (pathFrom && cellId(pathFrom) === id) role = "from";
+  else if (pathTo && cellId(pathTo) === id) role = "to";
+  else if (pathResult && pathResult.cells.some(c => cellId(c) === id)) role = "via";
+  if (!role) return;
+  drag = { role, moved: false };
   evt.preventDefault();
 }
 
 function onDragMove(evt) {
   if (!drag) return;
-  const fret = noteNearest(drag.string, boardPoint(evt).x);
-  if (fret === null) return;
-  const target = drag.end === "from" ? pathFrom : pathTo;
-  if (target.fret === fret) return;             // still on the same note
+  const p = boardPoint(evt);
+  const cell = cellNearest(p.x, p.y);
+  if (!cell) return;
+
+  const current = drag.role === "from" ? pathFrom : drag.role === "to" ? pathTo : pathVia;
+  if (current && cellId(current) === cellId(cell)) return;   // still on it
+
+  if (drag.role === "via") {
+    // A waypoint has to stay between the ends, or the run would double
+    // back on itself instead of travelling in one direction.
+    const lo = Math.min(pitchAt(pathFrom), pitchAt(pathTo));
+    const hi = Math.max(pitchAt(pathFrom), pitchAt(pathTo));
+    const pitch = pitchAt(cell);
+    if (pitch < lo || pitch > hi) return;
+    if (cellId(cell) === cellId(pathFrom) || cellId(cell) === cellId(pathTo)) return;
+    pathVia = cell;
+  } else if (drag.role === "from") {
+    pathFrom = cell;
+  } else {
+    pathTo = cell;
+  }
 
   drag.moved = true;
-  const moved = { string: drag.string, fret };
-  if (drag.end === "from") pathFrom = moved; else pathTo = moved;
-
-  if (pathFrom && pathTo) {
-    const root = document.getElementById("root").value;
-    const type = document.getElementById("scale").value;
-    pathResult = findPath(root, type, pathFrom, pathTo, cagedOn ? visibleCells : null);
-  }
   skipAutoPath = true;
+  recomputePath();
   render({ animate: false });                   // follow the pointer exactly
 }
 
@@ -356,7 +402,6 @@ function endDrag() {
   // A drag that actually moved shouldn't also register as a click.
   if (moved) suppressClick = true;
 }
-let suppressClick = false;
 
 /**
  * Clicking notes builds the run: the first pick is where it starts, the
@@ -365,24 +410,20 @@ let suppressClick = false;
 function selectPathNote(cell) {
   if (!pathOn) return;
   if (!pathFrom || pathTo) {
-    pathFrom = cell; pathTo = null; pathResult = null;
+    pathFrom = cell; pathTo = null; pathVia = null; pathResult = null;
     skipAutoPath = true;              // a pick of your own takes over
   } else if (cellId(cell) === cellId(pathFrom)) {
-    pathFrom = null; pathResult = null;               // clicked it again
+    pathFrom = null; pathVia = null; pathResult = null;   // clicked it again
     skipAutoPath = true;
   } else {
     pathTo = cell;
-    const root = document.getElementById("root").value;
-    const type = document.getElementById("scale").value;
-    // With a position showing, the run is limited to that shape's notes.
-    pathResult = findPath(root, type, pathFrom, pathTo,
-                          cagedOn ? visibleCells : null);
+    recomputePath();
   }
   render();
 }
 
 function clearPath() {
-  pathFrom = null; pathTo = null; pathResult = null;
+  pathFrom = null; pathTo = null; pathVia = null; pathResult = null;
   skipAutoPath = false;
 }
 
@@ -391,7 +432,7 @@ function clearPath() {
  * its lowest note up to its highest — since that is the run the position
  * exists to teach. Clicking any note replaces it with a run of your own.
  */
-function autoPathForPosition(root, type, grid) {
+function autoPathForPosition(grid) {
   let lowest = null, highest = null;
   grid.forEach((row, s) => row.forEach((cell, f) => {
     if (!cell) return;
@@ -403,7 +444,8 @@ function autoPathForPosition(root, type, grid) {
 
   pathFrom = { string: lowest.string,  fret: lowest.fret };
   pathTo   = { string: highest.string, fret: highest.fret };
-  pathResult = findPath(root, type, pathFrom, pathTo, visibleCells);
+  pathVia  = null;
+  recomputePath();
 }
 
 // ---- The run's line ---------------------------------------
@@ -527,11 +569,12 @@ function render({ animate = true } = {}) {
   }));
   // A run drawn before the position moved may no longer be playable here.
   if (pathOn && pathFrom && !visibleCells.has(cellId(pathFrom))) clearPath();
-  if (pathOn && pathTo && !visibleCells.has(cellId(pathTo))) { pathTo = null; pathResult = null; }
+  if (pathOn && pathTo && !visibleCells.has(cellId(pathTo))) { pathTo = null; pathVia = null; pathResult = null; }
+  if (pathOn && pathVia && !visibleCells.has(cellId(pathVia))) { pathVia = null; recomputePath(); }
 
   // Nothing picked yet, and a shape is on screen: trace all of it.
   if (pathOn && box && !pathFrom && !pathTo && !skipAutoPath) {
-    autoPathForPosition(root, type, grid);
+    autoPathForPosition(grid);
   }
 
   // 5) Move the notes, then trace the run over them.

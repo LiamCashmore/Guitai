@@ -66,23 +66,35 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 /* Notes not taking part in the run recede but stay visible. */
 .note.is-muted { opacity: 0.22 !important; }
 
-/* Endpoints get a ring so they read as chosen, not just coloured, and a
-   grab cursor because they can be dragged along their string. */
+/* Endpoints get a ring so they read as chosen, not just coloured. */
 .note.is-start .note-circle,
 .note.is-target .note-circle {
   stroke: var(--text);
   stroke-width: 3;
 }
 
+.note.is-path .note-circle { stroke: var(--root); stroke-width: 3; }
+
+/* A pinned waypoint: dashed ring, so it reads as held in place rather
+   than merely passed through. */
+.note.is-via .note-circle {
+  stroke: var(--text);
+  stroke-width: 3;
+  stroke-dasharray: 4 3;
+}
+
+/* Every note of a run can be taken hold of, not just its ends. */
 #board.picking .note.is-start,
-#board.picking .note.is-target { cursor: grab; }
+#board.picking .note.is-target,
+#board.picking .note.is-via,
+#board.picking .note.is-path { cursor: grab; }
 #board.picking .note.is-start:active,
-#board.picking .note.is-target:active { cursor: grabbing; }
+#board.picking .note.is-target:active,
+#board.picking .note.is-via:active,
+#board.picking .note.is-path:active { cursor: grabbing; }
 
 /* Nothing should be text-selected while dragging across the board. */
 #board.picking { user-select: none; -webkit-user-select: none; }
-
-.note.is-path .note-circle { stroke: var(--root); stroke-width: 3; }
 
 .caged-nav {
   display: none;              /* toggled to flex by JS */
