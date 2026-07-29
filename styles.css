@@ -1,0 +1,97 @@
+:root {
+  --wood: #2d2264;
+  --wood-edge: #483b75;
+  --wire: #9a9a9a;
+  --nut: #2b2b2b;
+  --string: #6b6b6b;
+  --root: #ec7c0c;
+  --note: #e9b74a;
+  --text: #222;
+  --bg: #fff2d3;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  margin: 0;
+  padding: 24px;
+}
+
+h1 { font-size: 20px; margin: 0 0 16px; }
+
+.controls {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field label { font-size: 12px; font-weight: 600; color: #555; }
+
+select {
+  padding: 6px 10px;
+  font-size: 14px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+}
+
+button {
+  padding: 6px 12px;
+  font-size: 14px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) { background: #f4f4f4; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+#cagedBtn.active {
+  background: var(--root);
+  color: #fff;
+  border-color: var(--root);
+}
+
+.caged-nav {
+  display: none;              /* toggled to flex by JS */
+  align-items: flex-end;
+  gap: 8px;
+  padding-bottom: 0;
+}
+
+.caged-nav button { min-width: 42px; font-size: 16px; line-height: 1; }
+
+#posLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: #444;
+  min-width: 210px;
+  text-align: center;
+  align-self: center;
+}
+
+.board-wrap { overflow-x: auto; }
+
+.legend {
+  display: flex;
+  gap: 20px;
+  margin-top: 14px;
+  font-size: 13px;
+  align-items: center;
+}
+
+.swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}

@@ -1,50 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Fretboard Visualizer</title>
-<style>
-  :root {
-    --wood: #2d2264;
-    --wood-edge: #483b75;
-    --wire: #9a9a9a;
-    --nut: #2b2b2b;
-    --string: #6b6b6b;
-    --root: #d53aac;
-    --note: #55e94a;
-    --text: #222;
-    --bg: #b9e9f2;
-  }
-  * { box-sizing: border-box; }
-  body {
-    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    margin: 0;
-    padding: 24px;
-  }
-  h1 { font-size: 20px; margin: 0 0 16px; }
-  .controls {
-    display: flex;
-    gap: 16px;
-    align-items: flex-end;
-    flex-wrap: wrap;
-    margin-bottom: 20px;
-  }
-  .field { display: flex; flex-direction: column; gap: 4px; }
-  .field label { font-size: 12px; font-weight: 600; color: #555; }
-  select {
-    padding: 6px 10px;
-    font-size: 14px;
-    border: 1px solid #ccc;
-    border-radius: 6px;
-    background: #fff;
-  }
-  .board-wrap { overflow-x: auto; }
-  .legend { display: flex; gap: 20px; margin-top: 14px; font-size: 13px; align-items: center; }
-  .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fretboard Visualizer</title>
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <h1>Fretboard Visualizer</h1>
@@ -65,6 +25,15 @@
         <option value="degree">Scale degrees</option>
       </select>
     </div>
+    <div class="field">
+      <label>Positions</label>
+      <button id="cagedBtn" type="button">CAGED</button>
+    </div>
+    <div id="cagedNav" class="caged-nav">
+      <button id="prevPos" type="button" title="Previous shape (←)">←</button>
+      <span id="posLabel"></span>
+      <button id="nextPos" type="button" title="Next shape (→)">→</button>
+    </div>
   </div>
 
   <div class="board-wrap">
@@ -76,179 +45,6 @@
     <span><span class="swatch" style="background:var(--note)"></span>Scale tone</span>
   </div>
 
-<script>
-// ============================================================
-// Music theory layer  (identical to Guitar.js — pure, portable)
-// ============================================================
-const chromaticScale = ["A","A#","B","C","C#","D","D#","E","F","F#","G","G#"];
-
-const scaleFormulas = {
-  "major":            [2,2,1,2,2,2,1],
-  "minor":            [2,1,2,2,1,2,2],
-  "major pentatonic": [2,2,3,2,3],
-  "minor pentatonic": [3,2,2,3,2],
-};
-
-// semitones-from-root -> degree label
-const degreeNames = ["R","b2","2","b3","3","4","b5","5","b6","6","b7","7"];
-
-function getFretNotes(openNote, numFrets) {
-  const start = chromaticScale.indexOf(openNote);
-  const notes = [];
-  for (let f = 0; f <= numFrets; f++) {
-    notes.push(chromaticScale[(start + f) % 12]);
-  }
-  return notes;
-}
-
-function getScaleNotes(root, type) {
-  const seq = scaleFormulas[type];
-  const start = chromaticScale.indexOf(root);
-  const notes = [];
-  let interval = 0;
-  for (let i = 0; i < seq.length; i++) {
-    notes.push(chromaticScale[(start + interval) % 12]);
-    interval += seq[i];
-  }
-  return notes;
-}
-
-function degreeOf(note, root) {
-  const d = (chromaticScale.indexOf(note) - chromaticScale.indexOf(root) + 12) % 12;
-  return degreeNames[d];
-}
-
-// ============================================================
-// Fretboard config
-// ============================================================
-const numFrets = 12;
-const tuning = ["E","A","D","G","B","E"];               // low -> high
-const strings = tuning.map(o => getFretNotes(o, numFrets));
-const markerFrets = [3, 5, 7, 9];                        // single inlay dots
-const doubleMarker = 12;
-
-// SVG geometry
-const PAD_L = 70, PAD_T = 44, PAD_R = 30, PAD_B = 24;
-const FRET_W = 62, STR_GAP = 46, R = 15;                 // note-circle radius
-const boardW = PAD_L + numFrets * FRET_W + PAD_R;
-const boardH = PAD_T + (strings.length - 1) * STR_GAP + PAD_B;
-
-const SVGNS = "http://www.w3.org/2000/svg";
-function el(tag, attrs) {
-  const n = document.createElementNS(SVGNS, tag);
-  for (const k in attrs) n.setAttribute(k, attrs[k]);
-  return n;
-}
-
-// x-center of a note at a given fret (0 = open, sits left of the nut)
-function fretX(f) {
-  return f === 0 ? PAD_L - 34 : PAD_L + (f - 0.5) * FRET_W;
-}
-// y-center of a string (index 0 = low E -> drawn at the BOTTOM, high E on top)
-function stringY(i) {
-  return PAD_T + (strings.length - 1 - i) * STR_GAP;
-}
-
-// ============================================================
-// Render
-// ============================================================
-function render() {
-  const root   = document.getElementById("root").value;
-  const type   = document.getElementById("scale").value;
-  const mode   = document.getElementById("labels").value;
-  const scaleSet = new Set(getScaleNotes(root, type));
-
-  const svg = document.getElementById("board");
-  svg.setAttribute("viewBox", `0 0 ${boardW} ${boardH}`);
-  svg.setAttribute("width", boardW);
-  svg.setAttribute("height", boardH);
-  svg.innerHTML = "";
-
-  const topY = stringY(strings.length - 1);
-  const botY = stringY(0);
-
-  // Wood
-  svg.appendChild(el("rect", {
-    x: PAD_L, y: topY - 18, width: numFrets * FRET_W, height: (botY - topY) + 36,
-    rx: 6, fill: "var(--wood)", stroke: "var(--wood-edge)", "stroke-width": 2
-  }));
-
-  // Inlay markers
-  const midY = (topY + botY) / 2;
-  markerFrets.forEach(f => {
-    svg.appendChild(el("circle", { cx: PAD_L + (f - 0.5) * FRET_W, cy: midY, r: 6, fill: "#d8bd90" }));
-  });
-  [ -1, 1 ].forEach(off => {
-    svg.appendChild(el("circle", {
-      cx: PAD_L + (doubleMarker - 0.5) * FRET_W, cy: midY + off * STR_GAP, r: 6, fill: "#d8bd90"
-    }));
-  });
-
-  // Fret wires + numbers
-  for (let f = 0; f <= numFrets; f++) {
-    const x = PAD_L + f * FRET_W;
-    svg.appendChild(el("line", {
-      x1: x, y1: topY - 18, x2: x, y2: botY + 18,
-      stroke: f === 0 ? "var(--nut)" : "var(--wire)",
-      "stroke-width": f === 0 ? 6 : 2
-    }));
-    if (f > 0) {
-      const t = el("text", { x: PAD_L + (f - 0.5) * FRET_W, y: PAD_T - 20,
-        "text-anchor": "middle", "font-size": 12, fill: "#888" });
-      t.textContent = f;
-      svg.appendChild(t);
-    }
-  }
-
-  // Strings (thicker toward the low E at the bottom)
-  strings.forEach((_, i) => {
-    const y = stringY(i);
-    svg.appendChild(el("line", {
-      x1: PAD_L, y1: y, x2: PAD_L + numFrets * FRET_W, y2: y,
-      stroke: "var(--string)", "stroke-width": 1 + (strings.length - 1 - i) * 0.4
-    }));
-    // open-string label
-    const lbl = el("text", { x: PAD_L - 52, y: y + 4, "font-size": 13, fill: "#666", "font-weight": 600 });
-    lbl.textContent = tuning[i];
-    svg.appendChild(lbl);
-  });
-
-  // Note circles
-  strings.forEach((stringNotes, i) => {
-    stringNotes.forEach((note, f) => {
-      if (!scaleSet.has(note)) return;
-      const isRoot = note === root;
-      const cx = fretX(f), cy = stringY(i);
-      svg.appendChild(el("circle", {
-        cx, cy, r: R,
-        fill: isRoot ? "var(--root)" : "var(--note)",
-        stroke: "#fff", "stroke-width": 2
-      }));
-      const label = mode === "degree" ? degreeOf(note, root) : note;
-      const t = el("text", { x: cx, y: cy + 4, "text-anchor": "middle",
-        "font-size": label.length > 2 ? 10 : 12, fill: "#fff", "font-weight": 700 });
-      t.textContent = label;
-      svg.appendChild(t);
-    });
-  });
-}
-
-// ============================================================
-// Wire up controls
-// ============================================================
-function initControls() {
-  const rootSel = document.getElementById("root");
-  chromaticScale.forEach(n => rootSel.appendChild(new Option(n, n)));
-  rootSel.value = "G";
-
-  const scaleSel = document.getElementById("scale");
-  Object.keys(scaleFormulas).forEach(t => scaleSel.appendChild(new Option(t, t)));
-
-  ["root","scale","labels"].forEach(id =>
-    document.getElementById(id).addEventListener("change", render));
-  render();
-}
-initControls();
-</script>
+  <script type="module" src="view.js"></script>
 </body>
 </html>
