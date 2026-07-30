@@ -75,22 +75,32 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .note.is-path .note-circle { stroke: var(--root); stroke-width: 3; }
 
-/* A pinned waypoint: dashed ring, so it reads as held in place rather
-   than merely passed through. */
-.note.is-via .note-circle {
+/* A pinned note — slid into place, but it gives way when an end moves.
+   Thin dotted ring: held, lightly. */
+.note.is-pinned .note-circle {
+  stroke: var(--text);
+  stroke-width: 2;
+  stroke-dasharray: 1 3;
+}
+
+/* A locked note: bold dashed ring, so it reads as held firmly rather than
+   merely passed through. Click it to let go. */
+.note.is-locked .note-circle {
   stroke: var(--text);
   stroke-width: 3;
   stroke-dasharray: 4 3;
 }
 
-/* Every note of a run can be taken hold of, not just its ends. */
+/* Every note of a run can be slid; clicking locks it in place. */
 #board.picking .note.is-start,
 #board.picking .note.is-target,
-#board.picking .note.is-via,
+#board.picking .note.is-locked,
+#board.picking .note.is-pinned,
 #board.picking .note.is-path { cursor: grab; }
 #board.picking .note.is-start:active,
 #board.picking .note.is-target:active,
-#board.picking .note.is-via:active,
+#board.picking .note.is-locked:active,
+#board.picking .note.is-pinned:active,
 #board.picking .note.is-path:active { cursor: grabbing; }
 
 /* Nothing should be text-selected while dragging across the board. */

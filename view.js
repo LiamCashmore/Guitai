@@ -11,7 +11,7 @@
 
 import {
   rootOptions,
-  scaleGroups,
+  groupsFor,
   MAJOR_SCALE,
   tuning,
   numFrets,
@@ -103,7 +103,16 @@ let posIndex = 0;
 let pathOn     = false;
 let pathFrom   = null;   // { string, fret }
 let pathTo     = null;
-let pathVia    = null;   // a note the run is pinned through
+/**
+ * Notes the run is held through, as { string, fret, locked }.
+ *
+ * Sliding a note pins it: the run follows, but the pin gives way once an
+ * end is moved, since it was only ever a way of shaping this particular
+ * run. Clicking a note locks it, and a lock is kept through everything —
+ * move an end and the run is re-routed to keep visiting it, turning back
+ * on itself if that is what it takes.
+ */
+let pathStops  = [];
 let pathResult = null;   // { cells, cost } from findPathThrough
 // Showing a position with PATH on traces the whole shape by default.
 // Clearing puts that aside so notes can be picked by hand instead.
@@ -242,7 +251,8 @@ function renderNotes(grid, mode) {
     const id = `${s}:${f}`;
     if (pathFrom && cellId(pathFrom) === id) return "is-start";
     if (pathTo   && cellId(pathTo)   === id) return "is-target";
-    if (pathVia  && cellId(pathVia)  === id) return "is-via";
+    const stop = pathStops.find(s => cellId(s) === id);
+    if (stop) return stop.locked ? "is-locked" : "is-pinned";
     if (onPath.has(id)) return "is-path";
     return pathFrom ? "is-muted" : "";
   };
@@ -268,6 +278,9 @@ function renderNotes(grid, mode) {
       });
       rec.group.addEventListener("pointerdown", e => {
         if (rec.pos) beginDrag(e, rec.pos);
+      });
+      rec.group.addEventListener("dblclick", () => {
+        if (rec.pos) restartPathAt(rec.pos);
       });
       noteLayer.appendChild(rec.group);
       liveNotes.set(key, rec);
@@ -303,19 +316,55 @@ function renderNotes(grid, mode) {
 // position is showing, this is the shape the run must stay inside.
 let visibleCells = null;
 
-// Work out the run for the notes currently chosen.
-function recomputePath() {
+const stopIndex = cell => pathStops.findIndex(s => cellId(s) === cellId(cell));
+const isLocked  = cell => { const i = stopIndex(cell); return i >= 0 && pathStops[i].locked; };
+
+/**
+ * Work out the run for the notes currently chosen.
+ *
+ * Held notes become stops along the way, ordered by pitch in the
+ * direction of travel. Nothing is discarded for sitting outside the two
+ * ends — a stop beyond them just turns the run around there.
+ *
+ * If a set of stops genuinely can't be joined, one is let go and the
+ * search retried: pins first, then the oldest locks last, so a
+ * deliberate lock outlives an incidental pin.
+ */
+function recomputePath({ force = false } = {}) {
   if (!pathFrom || !pathTo) { pathResult = null; return; }
   const root = document.getElementById("root").value;
   const type = document.getElementById("scale").value;
-  const stops = pathVia ? [pathFrom, pathVia, pathTo] : [pathFrom, pathTo];
-  const found = findPathThrough(root, type, stops, cagedOn ? visibleCells : null);
-  // A waypoint the run can't honour is dropped rather than left blocking.
-  if (!found && pathVia) {
-    pathVia = null;
-    pathResult = findPathThrough(root, type, [pathFrom, pathTo], cagedOn ? visibleCells : null);
-  } else {
-    pathResult = found;
+  const bounds = cagedOn ? visibleCells : null;
+
+  // A stop landing on an end is redundant.
+  pathStops = pathStops.filter(s =>
+    cellId(s) !== cellId(pathFrom) && cellId(s) !== cellId(pathTo));
+
+  // If the run on screen already visits every stop and both ends, leave
+  // it exactly as it is. Holding a note the run already passes through
+  // asks for nothing new, and re-solving would reshuffle the rest of it
+  // for no reason — each leg is optimised on its own, so a split can land
+  // on a different route of equal cost.
+  if (!force && pathResult) {
+    const cells = pathResult.cells;
+    const endsHold = cellId(cells[0]) === cellId(pathFrom) &&
+                     cellId(cells[cells.length - 1]) === cellId(pathTo);
+    const stopsHold = pathStops.every(s => cells.some(c => cellId(c) === cellId(s)));
+    if (endsHold && stopsHold) return;
+  }
+
+  const ascending = pitchAt(pathTo) >= pitchAt(pathFrom);
+  const inOrder = () => pathStops.slice().sort((a, b) =>
+    ascending ? pitchAt(a) - pitchAt(b) : pitchAt(b) - pitchAt(a));
+
+  while (true) {
+    const found = findPathThrough(root, type, [pathFrom, ...inOrder(), pathTo], bounds);
+    if (found) { pathResult = found; return; }
+    if (pathStops.length === 0) { pathResult = null; return; }
+    // Give up a pin before a lock.
+    const loosest = pathStops.map((s, i) => [s, i]).filter(([s]) => !s.locked).pop()
+                 ?? pathStops.map((s, i) => [s, i]).pop();
+    pathStops.splice(loosest[1], 1);
   }
 }
 
@@ -332,8 +381,8 @@ function boardPoint(evt) {
   return pt.matrixTransform(svg.getScreenCTM().inverse());
 }
 
-// The scale note nearest the pointer, on any string. Snapping to notes
-// rather than to coordinates means a dragged note only ever lands
+// The scale note nearest the pointer, anywhere on the board. Snapping to
+// notes rather than to coordinates means a dragged note only ever lands
 // somewhere the scale actually goes.
 function cellNearest(x, y) {
   let best = null, bestGap = Infinity;
@@ -348,45 +397,80 @@ function cellNearest(x, y) {
   return best;
 }
 
+// The nearest scale note along one string, for drags that stay on it.
+function cellNearestOnString(string, x) {
+  let best = null, bestGap = Infinity;
+  for (let f = 0; f <= numFrets; f++) {
+    if (!visibleCells || !visibleCells.has(`${string}:${f}`)) continue;
+    const gap = Math.abs(fretX(f) - x);
+    if (gap < bestGap) { bestGap = gap; best = { string, fret: f }; }
+  }
+  return best;
+}
+
 /**
- * Any note of the run can be taken hold of. The two ends decide which
- * notes the run covers; everything between is a waypoint, which decides
- * only which string a note is played on.
+ * What can be dragged, and how, differs by role on purpose.
+ *
+ * The two ends set how far the run reaches, so they move freely across
+ * the whole board. A locked note only decides which string one note is
+ * played on, so it keeps to its own string — easier to steer, and the
+ * notes on either side redistribute around it. Unlocked notes don't drag
+ * at all; click one first to hold it.
  */
 function beginDrag(evt, cell) {
   if (!pathOn || !pathFrom) return;
   const id = cellId(cell);
+
   let role = null;
   if (pathFrom && cellId(pathFrom) === id) role = "from";
   else if (pathTo && cellId(pathTo) === id) role = "to";
+  else if (stopIndex(cell) >= 0) role = "via";
   else if (pathResult && pathResult.cells.some(c => cellId(c) === id)) role = "via";
   if (!role) return;
-  drag = { role, moved: false };
+
+  drag = { role, string: cell.string, moved: false, held: null };
+  if (role === "via") {
+    // Sliding a note holds it. An existing stop keeps whatever standing
+    // it had; a note taken straight off the run becomes a pin.
+    const at = stopIndex(cell);
+    drag.held = at >= 0 ? pathStops[at] : { ...cell, locked: false };
+    if (at < 0) pathStops.push(drag.held);
+  }
   evt.preventDefault();
 }
 
 function onDragMove(evt) {
   if (!drag) return;
   const p = boardPoint(evt);
-  const cell = cellNearest(p.x, p.y);
+  // Ends roam the board; a waypoint slides along the string it sits on.
+  const cell = drag.role === "via"
+    ? cellNearestOnString(drag.string, p.x)
+    : cellNearest(p.x, p.y);
   if (!cell) return;
 
-  const current = drag.role === "from" ? pathFrom : drag.role === "to" ? pathTo : pathVia;
+  const current = drag.role === "from" ? pathFrom
+                : drag.role === "to"   ? pathTo
+                : drag.held;
   if (current && cellId(current) === cellId(cell)) return;   // still on it
 
   if (drag.role === "via") {
-    // A waypoint has to stay between the ends, or the run would double
-    // back on itself instead of travelling in one direction.
-    const lo = Math.min(pitchAt(pathFrom), pitchAt(pathTo));
-    const hi = Math.max(pitchAt(pathFrom), pitchAt(pathTo));
     const pitch = pitchAt(cell);
-    if (pitch < lo || pitch > hi) return;
-    if (cellId(cell) === cellId(pathFrom) || cellId(cell) === cellId(pathTo)) return;
-    pathVia = cell;
-  } else if (drag.role === "from") {
-    pathFrom = cell;
+    // A stop must stay between the ends while it's only a pin; a lock is
+    // free to go anywhere, and the run turns around to reach it.
+    if (!drag.held.locked) {
+      const lo = Math.min(pitchAt(pathFrom), pitchAt(pathTo));
+      const hi = Math.max(pitchAt(pathFrom), pitchAt(pathTo));
+      if (pitch <= lo || pitch >= hi) return;
+    }
+    // One stop per pitch: two would contradict each other.
+    pathStops = pathStops.filter(s => s === drag.held || pitchAt(s) !== pitch);
+    drag.held.string = cell.string;
+    drag.held.fret   = cell.fret;
   } else {
-    pathTo = cell;
+    // Moving an end releases the pins, which existed only to shape the
+    // run as it was. Locks are kept and the run re-routed to reach them.
+    pathStops = pathStops.filter(s => s.locked);
+    if (drag.role === "from") pathFrom = cell; else pathTo = cell;
   }
 
   drag.moved = true;
@@ -407,23 +491,65 @@ function endDrag() {
  * Clicking notes builds the run: the first pick is where it starts, the
  * second where it ends. A third click begins a new run from there.
  */
+/**
+ * Clicking a note along the run locks it where it stands; clicking it
+ * again lets it go. Locking is deliberate, so nothing gets pinned by
+ * accident — and a locked note can then be dragged along its string to
+ * place it, with the rest of the run rearranging around it.
+ *
+ * The ends stay put once placed; drag them to move them. Double-click
+ * anywhere starts over.
+ */
 function selectPathNote(cell) {
   if (!pathOn) return;
-  if (!pathFrom || pathTo) {
-    pathFrom = cell; pathTo = null; pathVia = null; pathResult = null;
-    skipAutoPath = true;              // a pick of your own takes over
-  } else if (cellId(cell) === cellId(pathFrom)) {
-    pathFrom = null; pathVia = null; pathResult = null;   // clicked it again
-    skipAutoPath = true;
-  } else {
+  const id = cellId(cell);
+
+  const at = stopIndex(cell);
+  if (at >= 0) {
+    if (pathStops[at].locked) {
+      pathStops.splice(at, 1);            // locked -> let it go entirely
+      recomputePath({ force: true });     // freedom returns, so re-solve
+    } else {
+      pathStops[at].locked = true;        // pinned -> make it stick
+    }
+    render();
+    return;
+  }
+  // Placed ends are fixed; only dragging moves them.
+  if (pathFrom && cellId(pathFrom) === id) return;
+  if (pathTo   && cellId(pathTo)   === id) return;
+
+  // A note the run passes through -> lock it right here.
+  if (pathResult && pathResult.cells.some(c => cellId(c) === id)) {
+    pathStops.push({ ...cell, locked: true });
+    recomputePath();
+    render();
+    return;
+  }
+
+  if (!pathFrom) {
+    pathFrom = cell;
+    skipAutoPath = true;                  // a pick of your own takes over
+  } else if (!pathTo) {
     pathTo = cell;
     recomputePath();
+  } else {
+    return;                               // run is complete; leave it be
   }
   render();
 }
 
+/** Double-click anywhere: drop the run and begin again from that note. */
+function restartPathAt(cell) {
+  if (!pathOn) return;
+  clearPath();
+  pathFrom = cell;
+  skipAutoPath = true;
+  render();
+}
+
 function clearPath() {
-  pathFrom = null; pathTo = null; pathVia = null; pathResult = null;
+  pathFrom = null; pathTo = null; pathStops = []; pathResult = null;
   skipAutoPath = false;
 }
 
@@ -444,7 +570,7 @@ function autoPathForPosition(grid) {
 
   pathFrom = { string: lowest.string,  fret: lowest.fret };
   pathTo   = { string: highest.string, fret: highest.fret };
-  pathVia  = null;
+  pathStops = [];
   recomputePath();
 }
 
@@ -569,8 +695,11 @@ function render({ animate = true } = {}) {
   }));
   // A run drawn before the position moved may no longer be playable here.
   if (pathOn && pathFrom && !visibleCells.has(cellId(pathFrom))) clearPath();
-  if (pathOn && pathTo && !visibleCells.has(cellId(pathTo))) { pathTo = null; pathVia = null; pathResult = null; }
-  if (pathOn && pathVia && !visibleCells.has(cellId(pathVia))) { pathVia = null; recomputePath(); }
+  if (pathOn && pathTo && !visibleCells.has(cellId(pathTo))) { pathTo = null; pathStops = []; pathResult = null; }
+  if (pathOn && pathStops.length) {
+    const kept = pathStops.filter(s => visibleCells.has(cellId(s)));
+    if (kept.length !== pathStops.length) { pathStops = kept; recomputePath({ force: true }); }
+  }
 
   // Nothing picked yet, and a shape is on screen: trace all of it.
   if (pathOn && box && !pathFrom && !pathTo && !skipAutoPath) {
@@ -589,8 +718,12 @@ function render({ animate = true } = {}) {
     else if (!pathResult) pathLabel.textContent = "no playable run between those";
     else {
       const frets = pathResult.cells.map(c => c.fret);
+      const locked = pathStops.filter(s => s.locked).length;
+      const pinned = pathStops.length - locked;
+      const held = (locked ? ` · ${locked} locked` : "") +
+                   (pinned ? ` · ${pinned} pinned` : "");
       pathLabel.textContent =
-        `${pathResult.cells.length} notes · frets ${Math.min(...frets)}–${Math.max(...frets)}`;
+        `${pathResult.cells.length} notes · frets ${Math.min(...frets)}–${Math.max(...frets)}${held}`;
     }
   }
 
@@ -646,19 +779,43 @@ function syncCagedControls() {
   document.getElementById("board").classList.toggle("picking", pathOn);
 }
 
+/**
+ * Load the second dropdown with scales or with arpeggios. Both are just
+ * note sets to everything downstream, so switching between them needs no
+ * more than a different menu.
+ */
+function fillMaterialMenu(kind) {
+  const sel = document.getElementById("scale");
+  sel.innerHTML = "";
+  const groups = groupsFor(kind);
+  Object.entries(groups).forEach(([group, names]) => {
+    const og = document.createElement("optgroup");
+    og.label = group;
+    names.forEach(n => og.appendChild(new Option(n, n)));
+    sel.appendChild(og);
+  });
+  sel.value = kind === "arpeggio"
+    ? Object.values(groups)[0][0]      // first triad
+    : MAJOR_SCALE;
+  document.getElementById("scaleLabel").textContent =
+    kind === "arpeggio" ? "Arpeggio" : "Scale";
+}
+
 function initControls() {
   const rootSel = document.getElementById("root");
   rootOptions.forEach(n => rootSel.appendChild(new Option(n, n)));
   rootSel.value = "G";
 
-  const scaleSel = document.getElementById("scale");
-  Object.entries(scaleGroups).forEach(([group, names]) => {
-    const og = document.createElement("optgroup");
-    og.label = group;
-    names.forEach(n => og.appendChild(new Option(n, n)));
-    scaleSel.appendChild(og);
+  fillMaterialMenu("scale");
+
+  // Switching between scales and arpeggios reloads the menu beneath it.
+  document.getElementById("kind").addEventListener("change", e => {
+    fillMaterialMenu(e.target.value);
+    posIndex = 0;
+    clearPath();
+    syncCagedControls();
+    render();
   });
-  scaleSel.value = MAJOR_SCALE;
 
   // Changing root or scale restarts at the lowest shape, and voids any
   // run — its notes may not exist in the new scale.

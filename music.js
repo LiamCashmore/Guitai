@@ -76,6 +76,7 @@ const scaleFormulas = {
   "Major Blues":             [2,1,1,3,2,3],
 
   // Symmetric
+  "Chromatic":               [1,1,1,1,1,1,1,1,1,1,1,1],
   "Whole Tone":              [2,2,2,2,2,2],
   "Diminished (W-H)":        [2,1,2,1,2,1,2,1],
   "Diminished (H-W)":        [1,2,1,2,1,2,1,2],
@@ -97,6 +98,25 @@ const scaleFormulas = {
   "Double Harmonic":         [1,3,1,2,1,3,1],
   "Neapolitan Minor":        [1,2,2,2,1,3,1],
   "Neapolitan Major":        [1,2,2,2,2,2,1],
+
+  // ---- Arpeggios ----------------------------------------
+  // Chords laid out as note sets, exactly like scales — just sparser.
+  // Everything downstream (the grid, spelling, positions, runs) treats
+  // them the same way, so nothing else has to know the difference.
+  "Major Triad":             [4,3,5],       // 1  3  5
+  "Minor Triad":             [3,4,5],       // 1 b3  5
+  "Diminished Triad":        [3,3,6],       // 1 b3 b5
+  "Augmented Triad":         [4,4,4],       // 1  3 #5
+
+  "Major 7":                 [4,3,4,1],     // 1  3  5  7
+  "Dominant 7":              [4,3,3,2],     // 1  3  5 b7
+  "Minor 7":                 [3,4,3,2],     // 1 b3  5 b7
+  "Minor 7b5":               [3,3,4,2],     // 1 b3 b5 b7
+  "Diminished 7":            [3,3,3,3],     // 1 b3 b5 bb7
+  "Minor-Major 7":           [3,4,4,1],     // 1 b3  5  7
+
+  "Major 6":                 [4,3,2,3],     // 1  3  5  6
+  "Minor 6":                 [3,4,2,3],     // 1 b3  5  6
 };
 
 // Grouping just for the dropdown UI (keys must match scaleFormulas).
@@ -106,10 +126,22 @@ export const scaleGroups = {
   "Harmonic Minor Modes": ["Harmonic Minor","Locrian nat6","Ionian #5","Dorian #4","Phrygian Dominant","Lydian #2","Altered Diminished"],
   "Harmonic Major":       ["Harmonic Major"],
   "Pentatonic & Blues":   ["Major Pentatonic","Minor Pentatonic","Minor Blues","Major Blues"],
-  "Symmetric":            ["Whole Tone","Diminished (W-H)","Diminished (H-W)","Augmented"],
+  "Symmetric":            ["Chromatic","Whole Tone","Diminished (W-H)","Diminished (H-W)","Augmented"],
   "Bebop":                ["Bebop Dominant","Bebop Major","Bebop Dorian","Bebop Melodic Minor","Bebop Harmonic Minor","Bebop Half-Diminished","Bebop Dominant b9"],
   "Exotic":               ["Hungarian Minor","Double Harmonic","Neapolitan Minor","Neapolitan Major"],
 };
+
+// Arpeggios, listed separately so the picker can offer one or the other.
+export const arpeggioGroups = {
+  "Triads":          ["Major Triad","Minor Triad","Diminished Triad","Augmented Triad"],
+  "Seventh Chords":  ["Major 7","Dominant 7","Minor 7","Minor 7b5","Diminished 7","Minor-Major 7"],
+  "Sixth Chords":    ["Major 6","Minor 6"],
+};
+
+/** The menu for a given kind of material. */
+export function groupsFor(kind) {
+  return kind === "arpeggio" ? arpeggioGroups : scaleGroups;
+}
 
 // ---- Scale-degree labels ----------------------------------
 // Reference: semitone offset of each degree in the major scale.
@@ -118,6 +150,10 @@ const majorRef = [0, 2, 4, 5, 7, 9, 11]; // degrees 1..7
 // Symmetric / bebop / pentatonic scales don't map onto 7 letter-names,
 // so their degree spellings are given explicitly (conventional jazz usage).
 const explicitDegrees = {
+  // Ascending chromatic is conventionally written with flats, so the
+  // raised degrees are spelled as lowered ones: b2 rather than #1.
+  "Chromatic":           ["1","b2","2","b3","3","4","b5","5","b6","6","b7","7"],
+
   "Major Pentatonic":    ["1","2","3","5","6"],
   "Minor Pentatonic":    ["1","b3","4","5","b7"],
   "Minor Blues":         ["1","b3","4","b5","5","b7"],
@@ -133,6 +169,20 @@ const explicitDegrees = {
   "Bebop Harmonic Minor":["1","2","b3","4","5","b6","b7","7"],
   "Bebop Half-Diminished":["1","b2","b3","4","b5","5","b6","b7"],
   "Bebop Dominant b9":   ["1","b2","3","4","5","b6","b7","7"],
+
+  // Arpeggios: chord tones, so the degrees are given outright.
+  "Major Triad":         ["1","3","5"],
+  "Minor Triad":         ["1","b3","5"],
+  "Diminished Triad":    ["1","b3","b5"],
+  "Augmented Triad":     ["1","3","#5"],
+  "Major 7":             ["1","3","5","7"],
+  "Dominant 7":          ["1","3","5","b7"],
+  "Minor 7":             ["1","b3","5","b7"],
+  "Minor 7b5":           ["1","b3","b5","b7"],
+  "Diminished 7":        ["1","b3","b5","bb7"],
+  "Minor-Major 7":       ["1","b3","5","7"],
+  "Major 6":             ["1","3","5","6"],
+  "Minor 6":             ["1","b3","5","6"],
 };
 
 // Degree labels for a scale, in the same order as getScalePcs.
@@ -172,7 +222,22 @@ function getFretPcs(openPc, frets) {
 // Properly spelled note names for a scale. The scale degree fixes the
 // letter (degree 3 -> two letters up from the root letter, etc.); the
 // accidental is whatever makes that letter equal the actual pitch.
+// Plain flat names, indexed by pitch class (A = 0).
+const FLAT_NAMES = ["A","Bb","B","C","Db","D","Eb","E","F","Gb","G","Ab"];
+
 function spellScale(root, type) {
+  // The chromatic scale is written pragmatically rather than by degree.
+  // Spelling all twelve notes strictly by degree forces a letter for each
+  // one, which in flat keys produces double flats (Eb's b5 is Bbb) and in
+  // sharp keys a mix of sharps and flats. Ascending chromatic is
+  // conventionally read in flats, so that is what it gets — with the root
+  // kept as chosen, so picking C# doesn't relabel itself Db.
+  if (type === "Chromatic") {
+    const rootPc = noteToPc(root);
+    return getScalePcs(rootPc, type)
+      .map((pc, i) => i === 0 ? root : FLAT_NAMES[pc]);
+  }
+
   const rootIdx = LETTERS.indexOf(root[0]);
   const rootPc  = noteToPc(root);
   const pcs     = getScalePcs(rootPc, type);
@@ -536,10 +601,18 @@ export function findPath(root, type, from, to, only = null) {
  * @param {Array<{string:number, fret:number}>} points  start, waypoints…, end
  */
 export function findPathThrough(root, type, points, only = null) {
+  // Drop repeats: a waypoint sitting on an end has nothing to join.
+  const stops = points.filter((p, i) =>
+    i === 0 || p.string !== points[i - 1].string || p.fret !== points[i - 1].fret);
+  if (stops.length < 2) return null;
+
   const cells = [];
   let cost = 0;
-  for (let i = 0; i + 1 < points.length; i++) {
-    const leg = findPath(root, type, points[i], points[i + 1], only);
+  for (let i = 0; i + 1 < stops.length; i++) {
+    // Each leg travels in its own direction, so a waypoint that lies
+    // outside the two ends simply turns the run around at that note
+    // rather than making it impossible.
+    const leg = findPath(root, type, stops[i], stops[i + 1], only);
     if (!leg) return null;
     cells.push(...(i === 0 ? leg.cells : leg.cells.slice(1)));
     cost += leg.cost;
