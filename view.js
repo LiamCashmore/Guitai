@@ -23,6 +23,7 @@ import {
   supportsCaged,
   findPathThrough,
   pitchAt,
+  chordVoicings,
 } from "./music.js";
 
 // ---- Visual config ----------------------------------------
@@ -119,9 +120,10 @@ let pathResult = null;   // { cells, cost } from findPathThrough
 let skipAutoPath = false;
 
 // Live SVG layers, built once.
-let noteLayer = null;
-let pathLayer = null;
-let highlight = null;
+let noteLayer  = null;
+let pathLayer  = null;
+let chordLayer = null;
+let highlight  = null;
 // key -> { group, circle, label }  for notes currently on screen
 const liveNotes = new Map();
 
@@ -199,6 +201,10 @@ function drawBoard() {
     lbl.textContent = tuning[i];
     svg.appendChild(lbl);
   });
+
+  // Chord furniture: the barre, and crosses over strings left silent.
+  chordLayer = el("g", { id: "chordLayer" });
+  svg.appendChild(chordLayer);
 
   // The run's connecting line sits under the note markers.
   pathLayer = el("g", { id: "pathLayer" });
@@ -643,6 +649,38 @@ function renderPathLine({ animate = true } = {}) {
 }
 
 // ============================================================
+// CHORDS
+// ============================================================
+
+const isChordMode = () => document.getElementById("kind").value === "chord";
+
+/**
+ * Reduce the grid to the notes a grip actually holds, and draw the
+ * furniture that only chords need: the barre, and a cross above every
+ * string left silent.
+ */
+function renderChord(root, type, voicing) {
+  const full = buildScaleGrid(root, type);
+  const grid = full.map(row => row.map(() => null));
+  for (const { string, fret } of voicing.cells) grid[string][fret] = full[string][fret];
+
+  chordLayer.innerHTML = "";
+
+  // Strings the grip leaves out, crossed through beyond the nut.
+  for (let s = 0; s < numStrings; s++) {
+    if (voicing.strings.includes(s)) continue;
+    const y = stringY(s), x = PAD_L - 34, r = 5;
+    [1, -1].forEach(dir => {
+      chordLayer.appendChild(el("line", {
+        x1: x - r, y1: y - r * dir, x2: x + r, y2: y + r * dir,
+        stroke: "#999", "stroke-width": 2, "stroke-linecap": "round",
+      }));
+    });
+  }
+  return grid;
+}
+
+// ============================================================
 // RENDER
 // ============================================================
 
@@ -650,6 +688,46 @@ function render({ animate = true } = {}) {
   const root = document.getElementById("root").value;
   const type = document.getElementById("scale").value;
   const mode = document.getElementById("labels").value;
+
+  // Chords take their own route: a grip is a set of notes held at once,
+  // not a shape to run through, so positions cycle voicings instead.
+  if (isChordMode()) {
+    const voicings = chordVoicings(root, type);
+    let grid = buildScaleGrid(root, type);
+    let voicing = null;
+    if (voicings.length) {
+      posIndex = Math.max(0, Math.min(posIndex, voicings.length - 1));
+      voicing = voicings[posIndex];
+      grid = renderChord(root, type, voicing);
+    } else {
+      chordLayer.innerHTML = "";
+    }
+    highlight.setAttribute("opacity", 0);
+    renderNotes(grid, mode);
+    renderPathLine({ animate: false });
+
+    const posLabel = document.getElementById("posLabel");
+    if (posLabel) {
+      if (!voicing) {
+        posLabel.textContent = "no voicing found";
+      } else {
+        const set = `strings ${numStrings - voicing.strings[0]}–${numStrings - voicing.strings.at(-1)}`;
+        const frets = voicing.lo === voicing.hi
+          ? `fret ${voicing.lo}` : `frets ${voicing.lo}–${voicing.hi}`;
+        posLabel.textContent =
+          `${posIndex + 1}/${voicings.length} · ${set} · ${voicing.order} · ${frets}` +
+          (voicing.stretch ? " · stretch" : "");
+      }
+    }
+    const prevB = document.getElementById("prevPos");
+    const nextB = document.getElementById("nextPos");
+    if (prevB && nextB) {
+      prevB.disabled = posIndex === 0;
+      nextB.disabled = posIndex >= voicings.length - 1;
+    }
+    return;
+  }
+  chordLayer.innerHTML = "";
 
   // 1) Build the scale's own grid.
   let grid = buildScaleGrid(root, type);
@@ -755,26 +833,36 @@ function render({ animate = true } = {}) {
 // The button names whichever system applies to the current scale:
 // CAGED for the natural modes, POSITION for everything else.
 function syncCagedControls() {
-  const type  = document.getElementById("scale").value;
-  const caged = supportsCaged(type);
-  const name  = caged ? "CAGED" : "POSITION";
-  const btn   = document.getElementById("cagedBtn");
-  const nav   = document.getElementById("cagedNav");
+  const type   = document.getElementById("scale").value;
+  const chords = isChordMode();
+  const caged  = supportsCaged(type);
+  const name   = chords ? "VOICINGS" : caged ? "CAGED" : "POSITION";
+  const btn    = document.getElementById("cagedBtn");
+  const nav    = document.getElementById("cagedNav");
 
-  btn.title = caged
-    ? "Show one CAGED shape at a time"
-    : "CAGED doesn't apply to this scale — showing playable hand positions";
-  btn.classList.toggle("active", cagedOn);
-  btn.textContent = cagedOn ? `${name}: on` : name;
-  nav.style.display = cagedOn ? "flex" : "none";
+  // A chord is only ever one grip, so voicing cycling is always on.
+  btn.disabled = chords;
+  btn.title = chords
+    ? "Chords are shown one grip at a time — step through them with the arrows"
+    : caged
+      ? "Show one CAGED shape at a time"
+      : "CAGED doesn't apply to this scale — showing playable hand positions";
+  btn.classList.toggle("active", chords || cagedOn);
+  btn.textContent = (chords || cagedOn) ? `${name}: on` : name;
+  nav.style.display = (chords || cagedOn) ? "flex" : "none";
 
+  // Runs are for scales and arpeggios; a chord isn't travelled through.
   const pathBtn = document.getElementById("pathBtn");
   const pathNav = document.getElementById("pathNav");
+  if (chords) { pathOn = false; clearPath(); }
+  pathBtn.disabled = chords;
   pathBtn.classList.toggle("active", pathOn);
   pathBtn.textContent = pathOn ? "PATH: on" : "PATH";
-  pathBtn.title = cagedOn
-    ? "Trace a run inside the position on screen"
-    : "Pick a starting note and a target note to build a run";
+  pathBtn.title = chords
+    ? "Runs apply to scales and arpeggios, not to chord grips"
+    : cagedOn
+      ? "Trace a run inside the position on screen"
+      : "Pick a starting note and a target note to build a run";
   pathNav.style.display = pathOn ? "flex" : "none";
   document.getElementById("board").classList.toggle("picking", pathOn);
 }
@@ -794,11 +882,9 @@ function fillMaterialMenu(kind) {
     names.forEach(n => og.appendChild(new Option(n, n)));
     sel.appendChild(og);
   });
-  sel.value = kind === "arpeggio"
-    ? Object.values(groups)[0][0]      // first triad
-    : MAJOR_SCALE;
+  sel.value = kind === "scale" ? MAJOR_SCALE : Object.values(groups)[0][0];
   document.getElementById("scaleLabel").textContent =
-    kind === "arpeggio" ? "Arpeggio" : "Scale";
+    kind === "arpeggio" ? "Arpeggio" : kind === "chord" ? "Chord" : "Scale";
 }
 
 function initControls() {

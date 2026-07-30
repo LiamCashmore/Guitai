@@ -107,6 +107,10 @@ const scaleFormulas = {
   "Minor Triad":             [3,4,5],       // 1 b3  5
   "Diminished Triad":        [3,3,6],       // 1 b3 b5
   "Augmented Triad":         [4,4,4],       // 1  3 #5
+  // Suspended: the third gives way to the note either side of it, which
+  // is why they sound unresolved — neither major nor minor.
+  "Sus2":                    [2,5,5],       // 1  2  5
+  "Sus4":                    [5,2,5],       // 1  4  5
 
   "Major 7":                 [4,3,4,1],     // 1  3  5  7
   "Dominant 7":              [4,3,3,2],     // 1  3  5 b7
@@ -114,6 +118,9 @@ const scaleFormulas = {
   "Minor 7b5":               [3,3,4,2],     // 1 b3 b5 b7
   "Diminished 7":            [3,3,3,3],     // 1 b3 b5 bb7
   "Minor-Major 7":           [3,4,4,1],     // 1 b3  5  7
+  "Augmented Major 7":       [4,4,3,1],     // 1  3 #5  7
+  "Augmented 7":             [4,4,2,2],     // 1  3 #5 b7
+  "7sus4":                   [5,2,3,2],     // 1  4  5 b7
 
   "Major 6":                 [4,3,2,3],     // 1  3  5  6
   "Minor 6":                 [3,4,2,3],     // 1 b3  5  6
@@ -138,9 +145,22 @@ export const arpeggioGroups = {
   "Sixth Chords":    ["Major 6","Minor 6"],
 };
 
+// Chords use the same note sets; the difference is that they are gripped
+// rather than played in sequence.
+export const chordGroups = {
+  "Triads":          ["Major Triad", "Minor Triad", "Diminished Triad",
+                      "Augmented Triad", "Sus2", "Sus4"],
+  "Seventh Chords":  ["Major 7", "Dominant 7", "Minor 7", "Minor 7b5",
+                      "Diminished 7", "Minor-Major 7", "Augmented Major 7",
+                      "Augmented 7", "7sus4"],
+  "Sixth Chords":    ["Major 6", "Minor 6"],
+};
+
 /** The menu for a given kind of material. */
 export function groupsFor(kind) {
-  return kind === "arpeggio" ? arpeggioGroups : scaleGroups;
+  if (kind === "arpeggio") return arpeggioGroups;
+  if (kind === "chord")    return chordGroups;
+  return scaleGroups;
 }
 
 // ---- Scale-degree labels ----------------------------------
@@ -175,6 +195,11 @@ const explicitDegrees = {
   "Minor Triad":         ["1","b3","5"],
   "Diminished Triad":    ["1","b3","b5"],
   "Augmented Triad":     ["1","3","#5"],
+  "Sus2":                ["1","2","5"],
+  "Sus4":                ["1","4","5"],
+  "Augmented Major 7":   ["1","3","#5","7"],
+  "Augmented 7":         ["1","3","#5","b7"],
+  "7sus4":               ["1","4","5","b7"],
   "Major 7":             ["1","3","5","7"],
   "Dominant 7":          ["1","3","5","b7"],
   "Minor 7":             ["1","b3","5","b7"],
@@ -520,6 +545,97 @@ export function generalPositions(root, type) {
     }
   }
   return boxes.sort((a, b) => a.lo - b.lo || a.hi - b.hi);
+}
+
+// ============================================================
+// CHORD VOICINGS  (grips, not sequences)
+//
+// A chord is sounded all at once, which runs into the hand: four
+// fingers, six strings, and only so far a reach. A voicing here puts one
+// note on each of a run of neighbouring strings, rising in pitch as it
+// crosses them — the close, stacked shape a triad naturally makes on a
+// guitar.
+//
+// Root position only for now: the root is the lowest note sounding.
+// The notes above it may still land in either order, so a triad comes
+// out as 1-3-5 or as 1-5-3 depending on where the strings fall.
+// ============================================================
+
+// Four frets is what the hand covers without complaint. Five is reachable
+// and sometimes the only way — a major 7 stacked in order on the lower
+// strings is 8,7,5,4, and a diminished triad's flat fifth pulls the shape
+// wide as well — but it is a stretch, so it is allowed and marked rather
+// than treated as equal.
+const CHORD_COMFORT = 4;
+const CHORD_SPAN    = 5;
+const CHORD_OPEN    = 5;   // an open string belongs near the nut
+
+/**
+ * Every root-position voicing of a chord, low on the neck first.
+ *
+ * The chord's own size decides how many strings are used: three for a
+ * triad, four for a seventh. Nothing is hard-coded per chord — the
+ * shapes fall out of where the notes actually sit.
+ *
+ * @returns {Array<{cells, notes, lo, hi, strings, order, label}>}
+ */
+export function chordVoicings(root, type) {
+  const grid = buildScaleGrid(root, type);
+  const size = new Set(getScalePcs(noteToPc(root), type)).size;
+
+  // Where each string carries a note of the chord.
+  const available = [];
+  for (let s = 0; s < numStrings; s++) {
+    const frets = [];
+    for (let f = 0; f <= numFrets; f++) if (grid[s][f]) frets.push(f);
+    available.push(frets);
+  }
+
+  const out = [];
+  for (let first = 0; first + size - 1 < numStrings; first++) {
+    const strings = Array.from({ length: size }, (_, i) => first + i);
+    const chosen = [];
+
+    (function choose(i) {
+      if (i === size) {
+        const cells = strings.map((string, k) => ({ string, fret: chosen[k] }));
+        const notes = cells.map(c => grid[c.string][c.fret]);
+        const pitches = cells.map(c => openMidi[c.string] + c.fret);
+
+        // Must climb as it crosses the strings, and sound every tone once.
+        for (let k = 1; k < size; k++) if (pitches[k] <= pitches[k - 1]) return;
+        if (new Set(notes.map(n => n.degree)).size !== size) return;
+        if (notes[0].degree !== "1") return;              // root position
+
+        // Within one hand. Open strings need no finger, but they belong
+        // to the nut — reaching up the neck while one rings is not a grip
+        // anyone would choose.
+        const stopped = cells.map(c => c.fret).filter(f => f > 0);
+        const span = stopped.length
+          ? Math.max(...stopped) - Math.min(...stopped) + 1 : 0;
+        if (span > CHORD_SPAN) return;
+        if (cells.some(c => c.fret === 0) &&
+            stopped.length && Math.max(...stopped) > CHORD_OPEN) return;
+
+        const frets = cells.map(c => c.fret);
+        out.push({
+          cells, notes, span,
+          stretch: span > CHORD_COMFORT,
+          lo: Math.min(...frets), hi: Math.max(...frets),
+          strings,
+          order: notes.map(n => n.degree).join("-"),
+          label: "root position",
+        });
+        return;
+      }
+      for (const f of available[strings[i]]) { chosen[i] = f; choose(i + 1); }
+    })(0);
+  }
+
+  // Up the neck; where two grips start at the same fret, the one the hand
+  // covers more easily comes first.
+  return out.sort((a, b) =>
+    a.lo - b.lo || a.span - b.span || a.strings[0] - b.strings[0]);
 }
 
 // ============================================================
