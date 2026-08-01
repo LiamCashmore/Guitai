@@ -773,7 +773,7 @@ const INVERSION = {
  *
  * @returns {{fingers, barre, barres} | null}
  */
-function gripFingering(played) {
+export function gripFingering(played) {
   const stopped = played.filter(v => v.fret > 0);
   if (stopped.length === 0) return { fingers: 0, barre: null, barres: [] };
 

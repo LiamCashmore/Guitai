@@ -54,8 +54,23 @@
       <label>Strings</label>
       <button id="openBtn" type="button">OPEN</button>
     </div>
+    <div class="field" id="strumField">
+      <label>Strum</label>
+      <div class="strum-row">
+        <button id="strumBtn" type="button">PLAY</button>
+        <input id="spread" type="range" min="0" max="100" step="5" value="60"
+               title="Strum speed — right is one sound, left is note by note" />
+        <span id="spreadLabel"></span>
+      </div>
+    </div>
     <div id="pathNav" class="caged-nav">
       <span id="pathLabel"></span>
+      <button id="playBtn" type="button">PLAY</button>
+      <span class="bpm">
+        <input id="bpm" type="range" min="40" max="200" step="5" value="80"
+               title="Tempo" />
+        <span id="bpmLabel">80</span>
+      </span>
       <button id="clearPath" type="button" title="Clear the run">clear</button>
     </div>
   </div>

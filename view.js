@@ -25,7 +25,10 @@ import {
   pitchAt,
   chordVoicings,
   hasOpenVoicing,
+  gripFingering,
 } from "./music.js";
+
+import { unlock, playSequence, playChord, strumGap } from "./audio.js";
 
 // ---- Visual config ----------------------------------------
 const markerFrets = [3, 5, 7, 9, 15, 17];   // single inlay dots
@@ -139,6 +142,31 @@ let pathResult = null;   // { cells, cost } from findPathThrough
 // Clearing puts that aside so notes can be picked by hand instead.
 let skipAutoPath = false;
 
+// Playback. `soundingAt` holds the notes under the ear right now — as
+// positions, so a re-render mid-play puts the highlight back where it
+// was. A run lights one at a time; a strum piles them up.
+let player     = null;
+let playerKind = null;          // "run" | "chord"
+let soundingAt = new Set();     // "string:fret"
+
+// The grip on screen, and the one being strummed, so a strum can be cut
+// short when the chord under it changes.
+let currentBase    = null;   // the grip as computed
+let currentVoicing = null;   // that grip as edited — what is actually shown
+let playingSig = null;
+const voicingSig = v => (v ? v.cells.map(cellId).join("|") : "");
+
+/**
+ * A grip the person has altered by hand, with GHOST on: notes switched off
+ * into the faint background, or faint ones switched on in their place.
+ *
+ * Held as a plain list of cells rather than as a search result, because
+ * the whole point is that nothing is re-searched — the notes that were
+ * not touched stay exactly where they were. The edit belongs to the grip
+ * it was made on and is dropped when a different one comes up.
+ */
+let gripEdit = null;   // { sig, cells: [{ string, fret }] }
+
 // Live SVG layers, built once.
 let noteLayer   = null;
 let pathLayer   = null;
@@ -155,8 +183,16 @@ let winDrag     = null;   // { grabbedAt } while the handle is held
 // them. Chords slide a fixed window instead, so they leave this null.
 let activeBand  = null;   // { lo, hi }
 let activeStops = null;   // [fret, ...] one per position
-// key -> { group, circle, label }  for notes currently on screen
+// key -> { group, circle, label }  for notes currently on screen. The key
+// is `string:rank` — the nth note along that string — not the fret, which
+// is what lets a marker slide to a new fret as positions change instead
+// of being torn down and rebuilt.
 const liveNotes = new Map();
+
+// Which marker is sitting on a given `string:fret` right now. Anything
+// wanting to find a note by where it is on the neck, rather than by which
+// marker it happens to be, goes through here. Rebuilt every render.
+const byPosition = new Map();
 
 const cellId = c => `${c.string}:${c.fret}`;
 
@@ -362,6 +398,8 @@ function renderNotes(grid, mode) {
     return pathFrom ? "is-muted" : "";
   };
 
+  byPosition.clear();
+
   // Retire markers with nowhere to go.
   for (const [key, rec] of liveNotes) {
     if (wanted.has(key)) continue;
@@ -379,7 +417,10 @@ function renderNotes(grid, mode) {
       rec.group.style.opacity = "0";
       rec.group.addEventListener("click", () => {
         if (suppressClick) { suppressClick = false; return; }
-        if (rec.pos) selectPathNote(rec.pos);
+        if (!rec.pos) return;
+        // In chord mode a click edits the grip; elsewhere it builds a run.
+        if (isChordMode()) toggleGripNote(rec.pos);
+        else selectPathNote(rec.pos);
       });
       rec.group.addEventListener("pointerdown", e => {
         if (rec.pos) beginDrag(e, rec.pos);
@@ -391,7 +432,11 @@ function renderNotes(grid, mode) {
       liveNotes.set(key, rec);
     }
     rec.pos = { string: want.string, fret: want.fret };
-    rec.group.setAttribute("class", `note ${roleOf(want.string, want.fret)}`.trim());
+    const at = `${want.string}:${want.fret}`;
+    byPosition.set(at, rec);
+    const sounding = soundingAt.has(at) ? " is-sounding" : "";
+    rec.group.setAttribute("class",
+      `note ${roleOf(want.string, want.fret)}${sounding}`.trim());
     // A brand-new marker is placed without transition so it fades in
     // where it belongs instead of flying in from the corner.
     if (isNew) rec.group.style.transition = "none";
@@ -436,6 +481,9 @@ const isLocked  = cell => { const i = stopIndex(cell); return i >= 0 && pathStop
  * deliberate lock outlives an incidental pin.
  */
 function recomputePath({ force = false } = {}) {
+  // The run is about to change under it, so whatever is sounding is no
+  // longer what's on screen.
+  stopSound();
   if (!pathFrom || !pathTo) { pathResult = null; return; }
   const root = document.getElementById("root").value;
   const type = document.getElementById("scale").value;
@@ -682,6 +730,7 @@ function restartPathAt(cell) {
 }
 
 function clearPath() {
+  stopSound();
   pathFrom = null; pathTo = null; pathStops = []; pathResult = null;
   skipAutoPath = false;
 }
@@ -838,11 +887,204 @@ function renderPathLine({ animate = true } = {}) {
   lineAnim = requestAnimationFrame(step);
 }
 
+// ---- Hearing it -------------------------------------------
+
+/**
+ * Light exactly the notes being heard, and let the rest go dark.
+ *
+ * Looked up by where a note is on the neck, not by which marker it is —
+ * markers are identified by their order along a string so that they can
+ * slide between frets, which is a different thing entirely.
+ */
+function showSounding(next) {
+  for (const at of soundingAt) {
+    if (!next.has(at)) byPosition.get(at)?.group.classList.remove("is-sounding");
+  }
+  for (const at of next) {
+    if (!soundingAt.has(at)) byPosition.get(at)?.group.classList.add("is-sounding");
+  }
+  soundingAt = next;
+}
+
+/** Stop whatever is playing, whichever kind it was. */
+function stopSound() {
+  const p = player;
+  player = null;
+  playerKind = null;
+  playingSig = null;
+  p?.stop();
+  showSounding(new Set());
+  syncPlayButton();
+  syncStrumButton();
+}
+
+/**
+ * Play the run as it stands, start to target.
+ *
+ * The notes are already in playing order and already carry their pitch,
+ * so there is nothing to work out here — this is only the hand-off.
+ */
+async function playRun() {
+  if (!pathResult || pathResult.cells.length < 2) return;
+  // Has to happen inside the click that called this, or the browser
+  // leaves the context suspended and nothing sounds.
+  if (!(await unlock())) return;
+
+  const bpm = Number(document.getElementById("bpm")?.value) || 80;
+  const notes = pathResult.cells.map(c => ({
+    midi: c.midi ?? pitchAt(c),
+    string: c.string,
+    key: cellId(c),
+  }));
+
+  player = playSequence(notes, {
+    bpm,
+    onNote: n => showSounding(n ? new Set([n.key]) : new Set()),
+    onEnd: () => { player = null; playerKind = null; syncPlayButton(); },
+  });
+  playerKind = "run";
+  syncPlayButton();
+}
+
+function syncPlayButton() {
+  const btn = document.getElementById("playBtn");
+  if (!btn) return;
+  const on = playerKind === "run";
+  const can = !!pathResult && pathResult.cells.length > 1;
+  btn.disabled = !can;
+  btn.textContent = on ? "STOP" : "PLAY";
+  btn.classList.toggle("active", on);
+  btn.title = !can ? "Build a run first"
+            : on ? "Stop"
+            : "Hear the run, start to target";
+}
+
+/**
+ * Strum the grip on screen, low string to high.
+ *
+ * Which is a downstroke — the bass of the chord arrives first and the
+ * top note last, which is why a strummed chord has a shape to it rather
+ * than being a block of sound.
+ */
+async function strumChord() {
+  const v = currentVoicing;
+  if (!v || !v.cells.length) return;
+  if (!(await unlock())) return;
+
+  const t = Number(document.getElementById("spread")?.value ?? 60) / 100;
+  const notes = v.cells.slice()
+    .sort((a, b) => a.string - b.string)     // string 0 is the low E
+    .map(c => ({ midi: pitchAt(c), string: c.string, key: cellId(c) }));
+
+  // The strum builds up rather than moving along, so the lit notes
+  // accumulate and clear together at the end.
+  const lit = new Set();
+  player = playChord(notes, {
+    gap: strumGap(t),
+    onStrike: n => { lit.add(n.key); showSounding(new Set(lit)); },
+    onEnd: () => {
+      player = null; playerKind = null; playingSig = null;
+      showSounding(new Set());
+      syncStrumButton();
+    },
+  });
+  playerKind = "chord";
+  playingSig = voicingSig(v);
+  syncStrumButton();
+}
+
+function syncStrumButton() {
+  const btn = document.getElementById("strumBtn");
+  if (!btn) return;
+  const on = playerKind === "chord";
+  const can = !!currentVoicing && isChordMode();
+  btn.disabled = !can;
+  btn.textContent = on ? "STOP" : "PLAY";
+  btn.classList.toggle("active", on);
+  btn.title = !can ? "No grip to play" : on ? "Stop" : "Strum this grip";
+}
+
 // ============================================================
 // CHORDS
 // ============================================================
 
 const isChordMode = () => document.getElementById("kind").value === "chord";
+
+/**
+ * The grip as it should be shown: the computed one, unless it has been
+ * edited by hand, in which case everything about it — its degrees, its
+ * fingering, which strings fall silent — is worked out again from the
+ * notes that are actually held. Nothing is searched for; the notes not
+ * touched are the same objects in the same order.
+ */
+function effectiveVoicing(root, type, voicing) {
+  if (!voicing) return null;
+  if (!gripEdit || gripEdit.sig !== voicingSig(voicing)) return voicing;
+
+  const cells = gripEdit.cells;
+  if (!cells.length) return voicing;
+
+  const full  = buildScaleGrid(root, type);
+  const notes = cells.map(c => full[c.string][c.fret]);
+  const stopped = cells.map(c => c.fret).filter(f => f > 0);
+  const lo = stopped.length ? Math.min(...stopped) : 0;
+  const hi = stopped.length ? Math.max(...stopped) : 0;
+  const span = stopped.length ? hi - lo + 1 : 0;
+  // An edit is allowed to produce something no hand can hold — you are
+  // choosing the notes, and being refused with no explanation would be
+  // worse than being told. So the fingering is worked out and, when there
+  // isn't one, that is said out loud rather than left blank.
+  const grip = gripFingering(cells);
+  const lowest = cells.reduce((low, c) => pitchAt(c) < pitchAt(low) ? c : low, cells[0]);
+
+  return {
+    ...voicing,
+    cells, notes, lo, hi, span,
+    strings: cells.map(c => c.string),   // gaps here become muted strings
+    stretch: span > 4,
+    fingers: grip?.fingers,
+    barre: grip?.barre,
+    fingerable: !!grip,
+    order: notes.map(n => n.degree).join("-"),
+    bass: full[lowest.string][lowest.fret].degree,
+    edited: true,
+  };
+}
+
+/**
+ * Switch a note in or out of the grip.
+ *
+ * A note that is sounding goes quiet, and its string with it. A faint one
+ * starts sounding, and whatever was on that string steps back — a string
+ * can only hold one note, so putting a finger somewhere new necessarily
+ * takes it off wherever it was.
+ *
+ * The rest of the grip is untouched. This is not a search for the nearest
+ * playable chord; it is the chord on screen, with one note changed.
+ */
+function toggleGripNote(pos) {
+  if (!ghostOn || !isChordMode() || !currentBase || !currentVoicing) return;
+
+  const id = cellId(pos);
+  const cells = currentVoicing.cells.map(c => ({ string: c.string, fret: c.fret }));
+  const at = cells.findIndex(c => cellId(c) === id);
+
+  if (at >= 0) {
+    if (cells.length <= 1) return;          // something has to sound
+    cells.splice(at, 1);
+  } else {
+    const onString = cells.findIndex(c => c.string === pos.string);
+    if (onString >= 0) cells.splice(onString, 1);
+    cells.push({ string: pos.string, fret: pos.fret });
+    // Back into string order, which only moves the note just added — the
+    // others were already in it, and the strum crosses the strings in
+    // this order.
+    cells.sort((a, b) => a.string - b.string);
+  }
+
+  gripEdit = { sig: voicingSig(currentBase), cells };
+  render();
+}
 
 /**
  * The grips for a chord, worked out once and kept.
@@ -952,6 +1194,10 @@ function render({ animate = true } = {}) {
     if (voicings.length) {
       posIndex = Math.max(0, Math.min(posIndex, voicings.length - 1));
       voicing = voicings[posIndex];
+      // An edit belongs to the grip it was made on. A different grip has
+      // come up, so it no longer describes anything.
+      if (gripEdit && gripEdit.sig !== voicingSig(voicing)) gripEdit = null;
+      voicing = effectiveVoicing(root, type, voicing) ?? voicing;
       // Ghosts follow the window when there is one, else the whole neck.
       const ghostRange = ghostOn
         ? { lo: winLo, hi: Math.min(winHi, numFrets), open: openOn }
@@ -961,6 +1207,12 @@ function render({ animate = true } = {}) {
       chordLayer.innerHTML = "";
       ghostCells = new Set();
     }
+    currentBase = voicings.length ? voicings[posIndex] : null;
+    currentVoicing = voicing;
+    // A strum belongs to the grip it started on; if that grip has moved
+    // out from under it, it is no longer describing what's on screen.
+    if (playerKind === "chord" && voicingSig(voicing) !== playingSig) stopSound();
+    syncStrumButton();
 
     // Show the stretch being searched, the same band the positions use.
     activeStops = null;                    // chords slide a window instead
@@ -984,6 +1236,7 @@ function render({ animate = true } = {}) {
         // Full grips reach everywhere, so an empty window means stacking
         // is the constraint, not the neck.
         posLabel.textContent = `no grip fits frets ${winLo}–${winHi}`;
+        posLabel.classList.remove("unplayable");
       } else {
         const set = `strings ${numStrings - voicing.strings[0]}–${numStrings - voicing.strings.at(-1)}`;
         const frets = voicing.lo === voicing.hi
@@ -991,10 +1244,16 @@ function render({ animate = true } = {}) {
         const hand = voicing.fingers !== undefined
           ? ` · ${voicing.fingers} finger${voicing.fingers === 1 ? "" : "s"}` +
             (voicing.barre ? " + barre" : "")
-          : "";
+          : voicing.edited ? " · more than 4 fingers" : "";
+        // An edit can ask for a hand nobody has. Still shown, still played
+        // — but flagged, so the note to take back off is obvious.
+        posLabel.classList.toggle("unplayable",
+          voicing.edited && voicing.fingerable === false);
         // Root position is the assumed case, so only the others are named.
-        const inv = voicing.label && voicing.label !== "root position"
-          ? ` · ${voicing.label}` : "";
+        // An edited grip is named for what it is instead: the inversion it
+        // started as no longer describes it.
+        const inv = voicing.edited ? " · edited"
+          : voicing.label && voicing.label !== "root position" ? ` · ${voicing.label}` : "";
         posLabel.textContent =
           `${posIndex + 1}/${voicings.length} · ${set}${inv} · ${voicing.order} · ${frets}` +
           hand + (voicing.stretch ? " · stretch" : "");
@@ -1097,6 +1356,7 @@ function render({ animate = true } = {}) {
         `${pathResult.cells.length} notes · frets ${Math.min(...frets)}–${Math.max(...frets)}${held}`;
     }
   }
+  syncPlayButton();
 
   // 5) Readout + arrow availability.
   const posLabel = document.getElementById("posLabel");
@@ -1164,7 +1424,11 @@ function syncCagedControls() {
   ghostField.style.display = chords ? "flex" : "none";
   ghostBtn.classList.toggle("active", ghostOn);
   ghostBtn.textContent = ghostOn ? "GHOST: on" : "GHOST";
-  ghostBtn.title = "Show the chord's other tones faintly, wherever they fall";
+  ghostBtn.title = chords && ghostOn
+    ? "Click a note to silence it, or a faint one to play it instead"
+    : "Show the chord's other tones faintly, wherever they fall";
+  // With ghosts up, the notes are editable, so they should look it.
+  document.getElementById("board").classList.toggle("editing", chords && ghostOn);
 
   // Open strings, likewise — but only where the chord has one to ring.
   // A chord with no open tone can't be opened, so the button stays off
@@ -1184,6 +1448,12 @@ function syncCagedControls() {
     : openOn
       ? "Open strings may ring under a grip anywhere on the neck"
       : "Open strings only where the window reaches the nut";
+
+  // Strumming is a chord idea too. Leaving chord mode leaves no grip to
+  // play, so the button has nothing to refer to.
+  document.getElementById("strumField").style.display = chords ? "flex" : "none";
+  if (!chords) currentVoicing = null;
+  syncStrumButton();
 }
 
 /**
@@ -1245,6 +1515,25 @@ function initControls() {
     syncCagedControls();
     render();
   });
+  document.getElementById("playBtn").addEventListener("click", () => {
+    if (playerKind === "run") stopSound(); else playRun();
+  });
+  const bpm = document.getElementById("bpm");
+  bpm.addEventListener("input", () => {
+    document.getElementById("bpmLabel").textContent = bpm.value;
+  });
+
+  document.getElementById("strumBtn").addEventListener("click", () => {
+    if (playerKind === "chord") stopSound(); else strumChord();
+  });
+  const spread = document.getElementById("spread");
+  const showSpread = () => {
+    const ms = Math.round(strumGap(Number(spread.value) / 100) * 1000);
+    document.getElementById("spreadLabel").textContent = `${ms} ms`;
+  };
+  spread.addEventListener("input", showSpread);
+  showSpread();
+
   document.getElementById("openBtn").addEventListener("click", () => {
     openOn = !openOn;
     posIndex = 0;   // a different set of grips — start at the top of it
