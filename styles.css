@@ -54,6 +54,8 @@ button:hover:not(:disabled) { background: #f4f4f4; }
 button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 #cagedBtn.active,
+#ghostBtn.active,
+#openBtn.active,
 #pathBtn.active {
   background: var(--root);
   color: #fff;
@@ -145,6 +147,12 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   transition: x var(--slide), width var(--slide), opacity var(--fade);
 }
 
+/* The run's line is a list of points, so JS steps it along the same curve
+   the notes use. Only its appearing and disappearing is left to CSS: a
+   run showing up somewhere new should fade in there, not skate across
+   the neck from wherever the last one happened to end. */
+#pathLayer polyline { transition: opacity var(--fade); }
+
 @media (prefers-reduced-motion: reduce) {
   .note, .note-circle, #posHighlight { transition: opacity var(--fade); }
 }
@@ -164,4 +172,22 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   border-radius: 50%;
   margin-right: 6px;
   vertical-align: middle;
+}
+
+/* ---- Window handle --------------------------------------- */
+/* A bar above the neck, dragged along it to pick a stretch. It slides by
+   transform and stretches by width, both eased, so moving between
+   positions of different widths reads as one motion. */
+.win-handle {
+  cursor: grab;
+  transition: transform 200ms cubic-bezier(0.45, 0.03, 0.25, 1);
+}
+.win-handle:active { cursor: grabbing; }
+.win-handle .bar {
+  transition: width 200ms cubic-bezier(0.45, 0.03, 0.25, 1);
+}
+.win-handle:hover .bar { opacity: 0.9; }
+
+@media (prefers-reduced-motion: reduce) {
+  .win-handle, .win-handle .bar { transition: none; }
 }

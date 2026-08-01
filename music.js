@@ -124,6 +124,51 @@ const scaleFormulas = {
 
   "Major 6":                 [4,3,2,3],     // 1  3  5  6
   "Minor 6":                 [3,4,2,3],     // 1 b3  5  6
+
+  // ---- Extended and altered -----------------------------
+  // Written as pitch-class sets like everything else, so a 13th chord is
+  // simply a seven-note set. Which of those notes a guitar can actually
+  // sound is decided later, by essentialDegrees.
+  "Power (5)":               [7,5],         // 1  5
+  "Add9":                    [2,2,3,5],     // 1  9  3  5
+  "Minor Add9":              [2,1,4,5],     // 1  9 b3  5
+  "7b5":                     [4,2,4,2],     // 1  3 b5 b7
+  "6/9":                     [2,2,3,2,3],   // 1  9  3  5  6
+
+  "Major 9":                 [2,2,3,4,1],   // 1  9  3  5  7
+  "Dominant 9":              [2,2,3,3,2],   // 1  9  3  5 b7
+  "Minor 9":                 [2,1,4,3,2],   // 1  9 b3  5 b7
+
+  "Minor 11":                [2,1,2,2,3,2], // 1  9 b3 11  5 b7
+  "Dominant 11":             [2,2,1,2,3,2], // 1  9  3 11  5 b7
+
+  "Dominant 13":             [2,2,1,2,2,1,2], // 1 9  3 11 5 13 b7
+  "Major 13":                [2,2,1,2,2,2,1], // 1 9  3 11 5 13  7
+  "Minor 13":                [2,1,2,2,2,1,2], // 1 9 b3 11 5 13 b7
+
+  "7b9":                     [1,3,3,3,2],   // 1 b9  3  5 b7
+  "7#9":                     [3,1,3,3,2],   // 1 #9  3  5 b7
+  "7#11":                    [4,2,1,3,2],   // 1  3 #11 5 b7
+  "Major 7#11":              [4,2,1,4,1],   // 1  3 #11 5  7
+  "7b13":                    [4,3,1,2,2],   // 1  3  5 b13 b7
+  "7alt":                    [1,2,1,2,4,2], // 1 b9 #9  3 b5 b7
+
+  // ---- Altered dominants --------------------------------
+  // The working vocabulary of jazz: a dominant seventh with its upper
+  // notes bent one way or the other to pull harder toward the tonic.
+  // Where two alterations are named, both belong to the chord — unlike
+  // a plain "alt", where the player chooses.
+  "9b5":                     [2,2,2,4,2],   // 1  9  3 b5 b7
+  "9#5":                     [2,2,4,2,2],   // 1  9  3 #5 b7
+  "9#11":                    [2,2,2,1,3,2], // 1  9  3 #11 5 b7
+  "13b9":                    [1,3,3,2,1,2], // 1 b9  3  5 13 b7
+  "13#11":                   [2,2,2,3,1,2], // 1  9  3 #11 13 b7
+  "7b5b9":                   [1,3,2,4,2],   // 1 b9  3 b5 b7
+  "7b5#9":                   [3,1,2,4,2],   // 1 #9  3 b5 b7
+  "7#5b9":                   [1,3,4,2,2],   // 1 b9  3 #5 b7
+  "7#5#9":                   [3,1,4,2,2],   // 1 #9  3 #5 b7
+  "7b9b13":                  [1,3,3,1,2,2], // 1 b9  3  5 b13 b7
+  "7#9b13":                  [3,1,3,1,2,2], // 1 #9  3  5 b13 b7
 };
 
 // Grouping just for the dropdown UI (keys must match scaleFormulas).
@@ -138,23 +183,32 @@ export const scaleGroups = {
   "Exotic":               ["Hungarian Minor","Double Harmonic","Neapolitan Minor","Neapolitan Major"],
 };
 
-// Arpeggios, listed separately so the picker can offer one or the other.
-export const arpeggioGroups = {
-  "Triads":          ["Major Triad","Minor Triad","Diminished Triad","Augmented Triad"],
-  "Seventh Chords":  ["Major 7","Dominant 7","Minor 7","Minor 7b5","Diminished 7","Minor-Major 7"],
-  "Sixth Chords":    ["Major 6","Minor 6"],
-};
+// (arpeggioGroups is defined below, sharing the chord list.)
 
 // Chords use the same note sets; the difference is that they are gripped
 // rather than played in sequence.
 export const chordGroups = {
-  "Triads":          ["Major Triad", "Minor Triad", "Diminished Triad",
-                      "Augmented Triad", "Sus2", "Sus4"],
-  "Seventh Chords":  ["Major 7", "Dominant 7", "Minor 7", "Minor 7b5",
+  "Triads & Power":  ["Major Triad", "Minor Triad", "Diminished Triad",
+                      "Augmented Triad", "Sus2", "Sus4", "Power (5)"],
+  "Sixths & Adds":   ["Major 6", "Minor 6", "6/9", "Add9", "Minor Add9"],
+  "Sevenths":        ["Major 7", "Dominant 7", "Minor 7", "Minor 7b5",
                       "Diminished 7", "Minor-Major 7", "Augmented Major 7",
-                      "Augmented 7", "7sus4"],
-  "Sixth Chords":    ["Major 6", "Minor 6"],
+                      "Augmented 7", "7sus4", "7b5"],
+  "Ninths":          ["Major 9", "Dominant 9", "Minor 9"],
+  "Elevenths & Thirteenths":
+                     ["Minor 11", "Dominant 11", "Dominant 13",
+                      "Major 13", "Minor 13"],
+  "Altered":         ["7b9", "7#9", "7#11", "Major 7#11", "7b13", "7alt"],
+  "Altered Dominants":
+                     ["9b5", "9#5", "9#11", "13b9", "13#11",
+                      "7b5b9", "7b5#9", "7#5b9", "7#5#9",
+                      "7b9b13", "7#9b13"],
 };
+
+// Every chord is also an arpeggio — the same notes, played one at a time
+// instead of together. The two menus share a list so they cannot drift
+// apart as chords are added.
+export const arpeggioGroups = chordGroups;
 
 /** The menu for a given kind of material. */
 export function groupsFor(kind) {
@@ -208,6 +262,38 @@ const explicitDegrees = {
   "Minor-Major 7":       ["1","b3","5","7"],
   "Major 6":             ["1","3","5","6"],
   "Minor 6":             ["1","b3","5","6"],
+
+  "Power (5)":           ["1","5"],
+  "Add9":                ["1","9","3","5"],
+  "Minor Add9":          ["1","9","b3","5"],
+  "7b5":                 ["1","3","b5","b7"],
+  "6/9":                 ["1","9","3","5","6"],
+  "Major 9":             ["1","9","3","5","7"],
+  "Dominant 9":          ["1","9","3","5","b7"],
+  "Minor 9":             ["1","9","b3","5","b7"],
+  "Minor 11":            ["1","9","b3","11","5","b7"],
+  "Dominant 11":         ["1","9","3","11","5","b7"],
+  "Dominant 13":         ["1","9","3","11","5","13","b7"],
+  "Major 13":            ["1","9","3","11","5","13","7"],
+  "Minor 13":            ["1","9","b3","11","5","13","b7"],
+  "7b9":                 ["1","b9","3","5","b7"],
+  "7#9":                 ["1","#9","3","5","b7"],
+  "7#11":                ["1","3","#11","5","b7"],
+  "Major 7#11":          ["1","3","#11","5","7"],
+  "7b13":                ["1","3","5","b13","b7"],
+  "7alt":                ["1","b9","#9","3","b5","b7"],
+
+  "9b5":                 ["1","9","3","b5","b7"],
+  "9#5":                 ["1","9","3","#5","b7"],
+  "9#11":                ["1","9","3","#11","5","b7"],
+  "13b9":                ["1","b9","3","5","13","b7"],
+  "13#11":               ["1","9","3","#11","13","b7"],
+  "7b5b9":               ["1","b9","3","b5","b7"],
+  "7b5#9":               ["1","#9","3","b5","b7"],
+  "7#5b9":               ["1","b9","3","#5","b7"],
+  "7#5#9":               ["1","#9","3","#5","b7"],
+  "7b9b13":              ["1","b9","3","5","b13","b7"],
+  "7#9b13":              ["1","#9","3","5","b13","b7"],
 };
 
 // Degree labels for a scale, in the same order as getScalePcs.
@@ -502,11 +588,19 @@ function inspectBox(grid, pcs, lo, hi) {
   };
 }
 
-// A box is usable when the hand can stay put and the scale comes out
-// whole: every string reachable, every pitch class present, and no hole
-// anywhere in the run from its lowest note to its highest.
-function boxIsPlayable(info) {
-  return info.gaps === 0 && info.complete && info.minPerString >= 1;
+/**
+ * A box is usable when the hand can stay put and the material comes out
+ * whole: every pitch class present, and no hole anywhere in the run from
+ * its lowest note to its highest.
+ *
+ * Normally every string should sound too. A set as sparse as a power
+ * chord can't manage that — its two notes sit seven semitones apart, so a
+ * hand's width of neck will sometimes cross a string carrying neither —
+ * and demanding it would leave the shape with no positions at all.
+ */
+function boxIsPlayable(info, sparse) {
+  if (info.gaps !== 0 || !info.complete) return false;
+  return sparse ? info.notes >= 3 : info.minPerString >= 1;
 }
 
 /**
@@ -530,6 +624,8 @@ function boxIsPlayable(info) {
 export function generalPositions(root, type) {
   const grid = buildScaleGrid(root, type);
   const pcs  = new Set(getScalePcs(noteToPc(root), type));
+  // Fewer than three notes and the set is too thin to reach every string.
+  const sparse = pcs.size < 3;
 
   const boxes = [];
   const seen = new Set();
@@ -538,7 +634,7 @@ export function generalPositions(root, type) {
       const hi = lo + span - 1;
       if (hi > numFrets) continue;
       const info = inspectBox(grid, pcs, lo, hi);
-      if (!boxIsPlayable(info)) continue;
+      if (!boxIsPlayable(info, sparse)) continue;
       if (seen.has(info.key)) continue;        // same notes as an earlier box
       seen.add(info.key);
       boxes.push({ shape: null, lo: info.lo, hi: info.hi, notes: info.notes, key: info.key });
@@ -569,29 +665,334 @@ export function generalPositions(root, type) {
 const CHORD_COMFORT = 4;
 const CHORD_SPAN    = 5;
 const CHORD_OPEN    = 5;   // an open string belongs near the nut
+const CHORD_OPEN_SPAN = 3; // ...and keeps the grip around it tight
+const CHORD_FINGERS = 4;
+
+const CHORD_MAX_BARRES = 2;   // the index can barre, and one other finger
+
+/**
+ * Which of a chord's notes have to sound, and which the guitar may let go.
+ *
+ * A thirteenth chord has seven notes; there are six strings and four
+ * fingers. Leaving notes out isn't a liberty, it's forced — so the
+ * question is which ones carry the chord's meaning:
+ *
+ *   - the third says major or minor, and never goes;
+ *   - the seventh says which seventh it is, and never goes;
+ *   - an altered note — b5, #5, b9, #9, #11, b13 — is the whole reason
+ *     the chord is named what it is, so it stays;
+ *   - the highest natural extension gives the chord its number: a 13
+ *     chord without its 13th is just a 7;
+ *   - the perfect fifth carries almost nothing and is dropped first;
+ *   - lower extensions give way to higher ones — the 9th and 11th of a
+ *     13 chord are colour, not identity.
+ *
+ * Triads are left whole: with only three notes there is nothing to spare.
+ */
+// Chords whose alterations are a choice rather than a list. "Alt" means
+// altered, not exhaustive — the player takes the colours that fit the
+// hand. Everywhere else, an alteration in the chord's name belongs to the
+// chord: 7#5#9 wants both, and giving only one would make it a different
+// chord entirely.
+const CHORD_CHOICES = {
+  "7alt": ["b9", "#9", "b5"],
+};
+
+export function chordRequirements(degrees, type) {
+  if (degrees.length <= 3) return { required: new Set(degrees), anyOf: [] };
+  const has = d => degrees.includes(d);
+
+  const required = new Set(["1"]);
+  for (const d of ["3", "b3", "2", "4"]) if (has(d)) required.add(d);   // quality
+  for (const d of ["7", "b7", "bb7", "6"]) if (has(d)) required.add(d); // the seventh
+
+  // Altered notes are the reason the chord is named what it is, so they
+  // stay — unless this is a chord that leaves the choice open.
+  const altered = degrees.filter(d =>
+    /^[#b]/.test(d) && !["b3", "b7", "bb7"].includes(d));
+  const optional = new Set(CHORD_CHOICES[type] ?? []);
+  const anyOf = [];
+  const choose = altered.filter(d => optional.has(d));
+  for (const d of altered) if (!optional.has(d)) required.add(d);
+  if (choose.length) anyOf.push(new Set(choose));
+
+  const names = ["13", "11", "9"].find(has);                           // what it's called
+  if (names) required.add(names);
+
+  // Once a chord needs five notes there is nowhere left to put them, and
+  // the note that goes is the root: a bass player or the next string down
+  // supplies it, while the third, seventh and alterations carry the
+  // chord's meaning by themselves. This is ordinary practice on dense
+  // dominants, and it is what makes them playable across the whole neck.
+  if (required.size >= 5) required.delete("1");
+
+  return { required, anyOf };
+}
+
+/** The notes a chord cannot do without, ignoring either/or choices. */
+export function essentialDegrees(degrees, type) {
+  return chordRequirements(degrees, type).required;
+}
+
+/** Does this set of sounding degrees satisfy the chord? */
+function satisfies(sounded, { required, anyOf }) {
+  for (const d of required) if (!sounded.has(d)) return false;
+  for (const group of anyOf) {
+    let found = false;
+    for (const d of group) if (sounded.has(d)) { found = true; break; }
+    if (!found) return false;
+  }
+  return true;
+}
+
+// Whichever note falls lowest names the inversion. Sevenths reach a third
+// one, with the seventh itself in the bass.
+const INVERSION = {
+  "1": "root position",
+  "2": "1st inversion",  "3": "1st inversion",  "b3": "1st inversion",
+  "4": "2nd inversion",  "5": "2nd inversion",  "b5": "2nd inversion",
+  "#5": "2nd inversion",
+  "6": "3rd inversion",  "7": "3rd inversion",
+  "b7": "3rd inversion", "bb7": "3rd inversion",
+};
+
+/**
+ * Can this grip be fingered, and with how many?
+ *
+ * A finger laid flat across fret F, covering strings a through b, works
+ * whenever every played string between them is at fret F or higher: the
+ * ones exactly at F it stops, the ones above it pass under untouched.
+ * Nothing requires F to be the lowest fret in the chord — the index
+ * barres low most of the time, but a ring finger barring higher up while
+ * the index holds a single lower note is just as real a grip, and it is
+ * what makes shapes like Gm7 as 313333 playable.
+ *
+ * So the count is worked out per fret: the notes sharing a fret are
+ * gathered into the fewest runs one finger each can cover, and a run
+ * breaks only where a string in the middle sits at a lower fret.
+ *
+ * @returns {{fingers, barre, barres} | null}
+ */
+function gripFingering(played) {
+  const stopped = played.filter(v => v.fret > 0);
+  if (stopped.length === 0) return { fingers: 0, barre: null, barres: [] };
+
+  const frets = stopped.map(v => v.fret);
+  if (Math.max(...frets) - Math.min(...frets) + 1 > CHORD_SPAN) return null;
+
+  const fretOn = new Map(played.map(p => [p.string, p.fret]));
+  const byFret = new Map();
+  for (const v of stopped) {
+    if (!byFret.has(v.fret)) byFret.set(v.fret, []);
+    byFret.get(v.fret).push(v.string);
+  }
+
+  let fingers = 0;
+  const barres = [];
+  for (const [fret, strings] of byFret) {
+    strings.sort((a, b) => a - b);
+    let runStart = 0;
+    for (let i = 1; i <= strings.length; i++) {
+      // Can this string join the run under the same finger?
+      let joins = i < strings.length;
+      if (joins) {
+        for (let s = strings[i - 1] + 1; s < strings[i]; s++) {
+          const f = fretOn.get(s);
+          if (f !== undefined && f < fret) { joins = false; break; }
+        }
+      }
+      if (joins) continue;
+      const from = strings[runStart], to = strings[i - 1];
+      fingers++;
+      if (to > from) barres.push({ fret, from, to });
+      runStart = i;
+    }
+  }
+  if (fingers > CHORD_FINGERS) return null;
+  if (barres.length > CHORD_MAX_BARRES) return null;
+  return { fingers, barre: barres[0] ?? null, barres };
+}
+
+/**
+ * Full grips: every string in a run sounds a chord tone, and notes may
+ * be doubled. This is how a guitar actually plays chords — open D is
+ * D A D F#, with the root twice — and it is what produces the open and
+ * barre shapes, since a barre is only reachable by doubling.
+ *
+ * @returns {Array<{cells, notes, lo, hi, strings, fingers, barre, ...}>}
+ */
+function fullVoicings(root, type, { openAnywhere = false } = {}) {
+  const grid = buildScaleGrid(root, type);
+  const wants = chordRequirements(getScaleDegrees(type), type);
+  const out = [];
+  const seen = new Set();
+
+  // Anchor on every fret, right to the end of the neck. Stopping a hand's
+  // width early would silently lose every grip whose lowest note sits up
+  // there — the reach simply runs out against the last fret instead.
+  for (let lo = 1; lo <= numFrets; lo++) {
+    // What each string can play: an open note, or one within the hand.
+    const options = [];
+    for (let s = 0; s < numStrings; s++) {
+      const frets = [];
+      if (grid[s][0]) frets.push(0);
+      for (let f = lo; f <= Math.min(lo + CHORD_SPAN - 1, numFrets); f++) {
+        if (grid[s][f]) frets.push(f);
+      }
+      options.push(frets);
+    }
+
+    for (let first = 0; first < numStrings; first++) {
+      for (let last = first + 2; last < numStrings; last++) {
+        const strings = [];
+        for (let s = first; s <= last; s++) strings.push(s);
+        if (strings.some(s => options[s].length === 0)) continue;
+
+        const chosen = [];
+        (function choose(i) {
+          if (i === strings.length) {
+            const cells = strings.map((string, k) => ({ string, fret: chosen[k] }));
+            const stopped = cells.filter(c => c.fret > 0);
+            if (stopped.length === 0) return;
+            // Anchor here, so each grip is counted once.
+            if (Math.min(...stopped.map(c => c.fret)) !== lo) return;
+
+            const hi = Math.max(...stopped.map(c => c.fret));
+            const span = hi - lo + 1;
+            // An open string belongs at the nut, so by default a grip
+            // that lets one ring is kept tight around it — reaching up
+            // the neck while it sounds is not what a player usually
+            // wants. Asked for open strings outright, the only limit is
+            // the hand's: an open string needs no finger, so the reach
+            // is no harder than any other grip of the same span.
+            const openCap = openAnywhere ? CHORD_SPAN : CHORD_OPEN_SPAN;
+            if (cells.some(c => c.fret === 0) && span > openCap) return;
+
+            const notes = cells.map(c => grid[c.string][c.fret]);
+            // Every note it must sound has to be here; the rest are free
+            // to appear or not.
+            if (!satisfies(new Set(notes.map(n => n.degree)), wants)) return;
+
+            // The root need not be the lowest note. Whichever tone falls
+            // under the others names the inversion, and a guitar reaches
+            // those as readily as it reaches root position.
+            const lowest = cells.reduce((low, c) =>
+              openMidi[c.string] + c.fret < openMidi[low.string] + low.fret ? c : low, cells[0]);
+            const bass = grid[lowest.string][lowest.fret].degree;
+
+            const grip = gripFingering(cells);
+            if (!grip) return;
+
+            const key = cells.map(c => `${c.string}:${c.fret}`).join("|");
+            if (seen.has(key)) return;
+            seen.add(key);
+
+            out.push({
+              cells, notes, span,
+              stretch: span > CHORD_COMFORT,
+              lo, hi, strings,
+              fingers: grip.fingers,
+              barre: grip.barre,
+              barres: grip.barres,
+              order: notes.map(n => n.degree).join("-"),
+              bass,
+              // A grip with no root at all isn't an inversion of anything —
+              // it's a rootless voicing, and worth saying so.
+              label: notes.some(n => n.degree === "1")
+                ? (INVERSION[bass] ?? "inversion")
+                : "rootless",
+            });
+            return;
+          }
+          for (const f of options[strings[i]]) { chosen[i] = f; choose(i + 1); }
+        })(0);
+      }
+    }
+  }
+  // Up the neck. At the same fret, root position leads — it is what a
+  // player reaches for first — then the fullest grip, then the easiest.
+  return out.sort((a, b) =>
+    a.lo - b.lo ||
+    (a.bass === "1" ? 0 : 1) - (b.bass === "1" ? 0 : 1) ||
+    b.cells.length - a.cells.length ||
+    a.fingers - b.fingers || a.span - b.span);
+}
+
+/**
+ * Can this chord use an open string at all?
+ *
+ * Only a string whose open note is one of the chord's own tones can ring
+ * with it, so this is just a look along the nut. A chord with none — F#
+ * major against E A D G B E — has no open shape anywhere on the neck, and
+ * nothing to offer if asked for one.
+ */
+export function hasOpenVoicing(root, type) {
+  const grid = buildScaleGrid(root, type);
+  for (let s = 0; s < numStrings; s++) if (grid[s][0]) return true;
+  return false;
+}
 
 /**
  * Every root-position voicing of a chord, low on the neck first.
  *
- * The chord's own size decides how many strings are used: three for a
- * triad, four for a seventh. Nothing is hard-coded per chord — the
- * shapes fall out of where the notes actually sit.
+ * Stacked: one string per chord tone, nothing doubled — the closed shape
+ * a piano would play, and the clearest way to see a chord's intervals.
+ * Unstacked: every string in a run sounds, doubling freely, which is how
+ * the open and barre chords a guitarist actually uses come about.
+ *
+ * `openAnywhere` lifts the rule that keeps an open string near the nut,
+ * so grips that let one ring under a hand further up the neck are offered
+ * too. Off, the only open shapes are the ones at the nut.
  *
  * @returns {Array<{cells, notes, lo, hi, strings, order, label}>}
  */
-export function chordVoicings(root, type) {
+export function chordVoicings(root, type, { stacked = true, openAnywhere = false } = {}) {
+  if (!stacked) return fullVoicings(root, type, { openAnywhere });
   const grid = buildScaleGrid(root, type);
-  const size = new Set(getScalePcs(noteToPc(root), type)).size;
 
-  // Where each string carries a note of the chord.
-  const available = [];
-  for (let s = 0; s < numStrings; s++) {
-    const frets = [];
-    for (let f = 0; f <= numFrets; f++) if (grid[s][f]) frets.push(f);
-    available.push(frets);
+  // A stack puts one note on each string, so it can only hold as many
+  // notes as the hand can span. Up to five it takes the chord whole;
+  // beyond that it stacks what the chord cannot do without, which is the
+  // shell a guitarist would play anyway.
+  //
+  // Where a chord offers a choice of colour — an altered dominant with
+  // its b9, #9 and b5 — each choice makes its own stack, so every version
+  // is on offer rather than the chord being flattened to a plain seventh.
+  const degrees = getScaleDegrees(type);
+  const wants = chordRequirements(degrees, type);
+  const noteSets = [];
+  if (degrees.length <= 5) {
+    noteSets.push(new Set(degrees));
+  } else if (wants.anyOf.length === 0) {
+    noteSets.push(new Set(wants.required));
+  } else {
+    // One stack per way of colouring the chord.
+    let combos = [new Set(wants.required)];
+    for (const group of wants.anyOf) {
+      const grown = [];
+      for (const base of combos) for (const pick of group) {
+        grown.push(new Set([...base, pick]));
+      }
+      combos = grown;
+    }
+    noteSets.push(...combos);
   }
 
   const out = [];
+  const seen = new Set();
+  for (const wanted of noteSets) {
+  const size = wanted.size;
+
+  // Where each string carries one of the notes being stacked.
+  const available = [];
+  for (let s = 0; s < numStrings; s++) {
+    const frets = [];
+    for (let f = 0; f <= numFrets; f++) {
+      if (grid[s][f] && wanted.has(grid[s][f].degree)) frets.push(f);
+    }
+    available.push(frets);
+  }
+
   for (let first = 0; first + size - 1 < numStrings; first++) {
     const strings = Array.from({ length: size }, (_, i) => first + i);
     const chosen = [];
@@ -605,7 +1006,13 @@ export function chordVoicings(root, type) {
         // Must climb as it crosses the strings, and sound every tone once.
         for (let k = 1; k < size; k++) if (pitches[k] <= pitches[k - 1]) return;
         if (new Set(notes.map(n => n.degree)).size !== size) return;
-        if (notes[0].degree !== "1") return;              // root position
+
+        // Any tone may sit at the bottom. Stacking the chord from its
+        // third or fifth instead of its root gives the inversions, and on
+        // a symmetric chord those are the whole vocabulary: a diminished
+        // seventh is the same shape every three frets, each repeat an
+        // inversion of the one below it.
+        const bass = notes[0].degree;              // pitch rises, so this is lowest
 
         // Within one hand. Open strings need no finger, but they belong
         // to the nut — reaching up the neck while one rings is not a grip
@@ -618,24 +1025,31 @@ export function chordVoicings(root, type) {
             stopped.length && Math.max(...stopped) > CHORD_OPEN) return;
 
         const frets = cells.map(c => c.fret);
+        const key = cells.map(c => `${c.string}:${c.fret}`).join("|");
+        if (seen.has(key)) return;      // two colourings can meet here
+        seen.add(key);
         out.push({
           cells, notes, span,
           stretch: span > CHORD_COMFORT,
           lo: Math.min(...frets), hi: Math.max(...frets),
           strings,
           order: notes.map(n => n.degree).join("-"),
-          label: "root position",
+          bass,
+          label: INVERSION[bass] ?? "inversion",
         });
         return;
       }
       for (const f of available[strings[i]]) { chosen[i] = f; choose(i + 1); }
     })(0);
   }
+  }
 
-  // Up the neck; where two grips start at the same fret, the one the hand
-  // covers more easily comes first.
+  // Up the neck; at the same fret, root position leads, then whichever
+  // the hand covers most easily.
   return out.sort((a, b) =>
-    a.lo - b.lo || a.span - b.span || a.strings[0] - b.strings[0]);
+    a.lo - b.lo ||
+    (a.bass === "1" ? 0 : 1) - (b.bass === "1" ? 0 : 1) ||
+    a.span - b.span || a.strings[0] - b.strings[0]);
 }
 
 // ============================================================
