@@ -2,86 +2,112 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Fretboard Visualizer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="color-scheme" content="light" />
+  <title>Guitai — Fretboard</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <h1>Fretboard Visualizer</h1>
+  <div class="app">
 
-  <div class="controls">
-    <div class="field">
-      <label for="root">Root</label>
-      <select id="root"></select>
-    </div>
-    <div class="field">
-      <label for="kind">Type</label>
-      <select id="kind">
-        <option value="scale">Scales</option>
-        <option value="arpeggio">Arpeggios</option>
-        <option value="chord">Chords</option>
-      </select>
-    </div>
-    <div class="field">
-      <label for="scale" id="scaleLabel">Scale</label>
-      <select id="scale"></select>
-    </div>
-    <div class="field">
-      <label for="labels">Labels</label>
-      <select id="labels">
-        <option value="note">Note names</option>
-        <option value="degree">Scale degrees</option>
-      </select>
-    </div>
-    <div class="field">
-      <label>Positions</label>
-      <button id="cagedBtn" type="button">CAGED</button>
-    </div>
-    <div id="cagedNav" class="caged-nav">
-      <button id="prevPos" type="button" title="Previous shape (←)">←</button>
-      <span id="posLabel"></span>
-      <button id="nextPos" type="button" title="Next shape (→)">→</button>
-    </div>
-    <div class="field">
-      <label>Run</label>
-      <button id="pathBtn" type="button">PATH</button>
-    </div>
-    <div class="field" id="ghostField">
-      <label>Tones</label>
-      <button id="ghostBtn" type="button">GHOST</button>
-    </div>
-    <div class="field" id="openField">
-      <label>Strings</label>
-      <button id="openBtn" type="button">OPEN</button>
-    </div>
-    <div class="field" id="strumField">
-      <label>Strum</label>
-      <div class="strum-row">
-        <button id="strumBtn" type="button">PLAY</button>
-        <input id="spread" type="range" min="0" max="100" step="5" value="60"
-               title="Strum speed — right is one sound, left is note by note" />
-        <span id="spreadLabel"></span>
+    <header class="masthead">
+      <!-- The sun the whole palette comes from: six flat bands, clipped
+           to a circle, sitting where a logo would. -->
+      <svg class="sunmark" width="46" height="46" viewBox="0 0 46 46" aria-hidden="true">
+        <defs><clipPath id="sunClip"><circle cx="23" cy="23" r="22" /></clipPath></defs>
+        <g clip-path="url(#sunClip)">
+          <rect x="0" y="0"  width="46" height="8" fill="var(--band-1)" />
+          <rect x="0" y="8"  width="46" height="8" fill="var(--band-2)" />
+          <rect x="0" y="16" width="46" height="9" fill="var(--band-3)" />
+          <rect x="0" y="25" width="46" height="8" fill="var(--band-4)" />
+          <rect x="0" y="33" width="46" height="7" fill="var(--band-5)" />
+          <rect x="0" y="40" width="46" height="6" fill="var(--band-6)" />
+        </g>
+      </svg>
+      <h1>Guitai</h1>
+      <p>Scales · Arpeggios · Chords</p>
+    </header>
+
+    <!-- What you're looking at. Always relevant, so it always shows. -->
+    <section class="panel" aria-label="Choose what to show">
+      <div class="field">
+        <label for="root">Root</label>
+        <div class="select"><select id="root"></select></div>
       </div>
-    </div>
-    <div id="pathNav" class="caged-nav">
-      <span id="pathLabel"></span>
-      <button id="playBtn" type="button">PLAY</button>
-      <span class="bpm">
-        <input id="bpm" type="range" min="40" max="200" step="5" value="80"
-               title="Tempo" />
-        <span id="bpmLabel">80</span>
-      </span>
-      <button id="clearPath" type="button" title="Clear the run">clear</button>
-    </div>
-  </div>
+      <div class="field">
+        <label for="kind">Type</label>
+        <div class="select">
+          <select id="kind">
+            <option value="scale">Scales</option>
+            <option value="arpeggio">Arpeggios</option>
+            <option value="chord">Chords</option>
+          </select>
+        </div>
+      </div>
+      <div class="field wide">
+        <label for="scale" id="scaleLabel">Scale</label>
+        <div class="select"><select id="scale"></select></div>
+      </div>
+      <div class="field">
+        <label for="labelsBtn">Labels</label>
+        <button id="labelsBtn" class="btn" type="button">Note names</button>
+      </div>
+    </section>
 
-  <div class="board-wrap">
-    <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
-  </div>
+    <!-- Everything below depends on what's on the board, and hides itself
+         when it has nothing to act on. -->
+    <section class="panel panel-quiet" aria-label="Shape and playback">
+      <div class="cluster">
+        <button id="cagedBtn" class="btn" type="button">CAGED</button>
+        <div id="cagedNav" class="stepper">
+          <button id="prevPos" class="btn btn-icon" type="button" title="Previous shape (←)" aria-label="Previous shape">‹</button>
+          <span id="posLabel" class="readout"></span>
+          <button id="nextPos" class="btn btn-icon" type="button" title="Next shape (→)" aria-label="Next shape">›</button>
+        </div>
+      </div>
 
-  <div class="legend">
-    <span><span class="swatch" style="background:var(--root)"></span>Root</span>
-    <span><span class="swatch" style="background:var(--note)"></span>Scale tone</span>
+      <div class="cluster" id="ghostField">
+        <button id="ghostBtn" class="btn" type="button">Ghost tones</button>
+      </div>
+
+      <div class="cluster" id="openField">
+        <button id="openBtn" class="btn" type="button">Open strings</button>
+      </div>
+
+      <div class="cluster" id="strumField">
+        <button id="strumBtn" class="btn btn-accent" type="button">Strum</button>
+        <span class="slider">
+          <input id="spread" type="range" min="0" max="100" step="5" value="60"
+                 aria-label="Strum speed"
+                 title="Strum speed — right is one sound, left is note by note" />
+          <span id="spreadLabel" class="readout"></span>
+        </span>
+      </div>
+
+      <div class="cluster" id="pathNav">
+        <span id="pathLabel" class="readout readout-hint"></span>
+        <div id="runControls" class="cluster">
+          <button id="playBtn" class="btn btn-accent" type="button">Play</button>
+          <span class="slider">
+            <input id="bpm" type="range" min="40" max="200" step="5" value="80"
+                   aria-label="Tempo" title="Tempo" />
+            <span id="bpmLabel" class="readout">80</span>
+          </span>
+          <button id="clearPath" class="btn btn-quiet" type="button" title="Clear the run">Clear</button>
+        </div>
+      </div>
+    </section>
+
+    <div class="board-wrap">
+      <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
+    </div>
+
+    <div class="legend">
+      <span><span class="swatch" style="background:var(--root)"></span>Root</span>
+      <span><span class="swatch" style="background:var(--note)"></span><span id="legendTone">Scale tone</span></span>
+      <span class="legend-tip" id="legendTip"></span>
+    </div>
+
   </div>
 
   <script type="module" src="view.js"></script>

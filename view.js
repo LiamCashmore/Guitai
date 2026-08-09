@@ -106,6 +106,20 @@ function playedSpan(grid, box) {
 let cagedOn  = false;
 let posIndex = 0;
 
+/**
+ * What each marker says. Cycled by one button rather than chosen from a
+ * menu, because there are only three answers and the middle one — no
+ * label at all — is the one a player wants when they are testing
+ * themselves on the shape, so it should be a tap away and not buried.
+ */
+const LABEL_MODES = [
+  { mode: "note",   text: "Note names",    hint: "Showing note names — tap for scale degrees" },
+  { mode: "degree", text: "Scale degrees", hint: "Showing scale degrees — tap to hide labels" },
+  { mode: "none",   text: "Hidden",        hint: "Labels hidden — tap for note names" },
+];
+let labelIndex = 0;
+const labelMode = () => LABEL_MODES[labelIndex].mode;
+
 // The stretch of neck being searched for grips. Chords are always shown
 // one hand-position at a time, so this is simply where that hand is —
 // dragged along the neck by the bar above it.
@@ -123,7 +137,9 @@ let ghostCells = new Set();
 // wherever the hand happens to be.
 let openOn = false;
 
-// Path mode: pick a note to start on, then one to finish on.
+// Path mode. Not a setting any more: a scale or an arpeggio is something
+// you travel through, so picking a start and a target is simply what the
+// board does. A chord isn't travelled through, so it is off there.
 let pathOn     = false;
 let pathFrom   = null;   // { string, fret }
 let pathTo     = null;
@@ -138,8 +154,8 @@ let pathTo     = null;
  */
 let pathStops  = [];
 let pathResult = null;   // { cells, cost } from findPathThrough
-// Showing a position with PATH on traces the whole shape by default.
-// Clearing puts that aside so notes can be picked by hand instead.
+// Showing a position traces the whole shape by default. Clearing puts
+// that aside so notes can be picked by hand instead.
 let skipAutoPath = false;
 
 // Playback. `soundingAt` holds the notes under the ear right now — as
@@ -207,6 +223,20 @@ function drawBoard() {
   svg.setAttribute("height", boardH);
   svg.innerHTML = "";
 
+  // The six bands, as an SVG paint so the hand-position bar can be the
+  // sunset itself rather than a flat swatch of it. Hard stops: each band
+  // ends exactly where the next begins, with nothing blended between.
+  const defs = el("defs", {});
+  const grad = el("linearGradient", { id: "sunsetBar", x1: "0", y1: "0", x2: "1", y2: "0" });
+  const BANDS = ["--band-1", "--band-2", "--band-3", "--band-4", "--band-5", "--band-6"];
+  BANDS.forEach((band, i) => {
+    const from = i / BANDS.length, to = (i + 1) / BANDS.length;
+    grad.appendChild(el("stop", { offset: from, "stop-color": `var(${band})` }));
+    grad.appendChild(el("stop", { offset: to,   "stop-color": `var(${band})` }));
+  });
+  defs.appendChild(grad);
+  svg.appendChild(defs);
+
   const topY = stringY(numStrings - 1);
   const botY = stringY(0);
 
@@ -220,11 +250,11 @@ function drawBoard() {
   const midY = (topY + botY) / 2;
   markerFrets.forEach(f => {
     if (f > numFrets) return;
-    svg.appendChild(el("circle", { cx: PAD_L + (f - 0.5) * FRET_W, cy: midY, r: 6, fill: "#d8bd90" }));
+    svg.appendChild(el("circle", { cx: PAD_L + (f - 0.5) * FRET_W, cy: midY, r: 6, fill: "var(--inlay)" }));
   });
   [-1, 1].forEach(off => {
     svg.appendChild(el("circle", {
-      cx: PAD_L + (doubleMarker - 0.5) * FRET_W, cy: midY + off * STR_GAP, r: 6, fill: "#d8bd90"
+      cx: PAD_L + (doubleMarker - 0.5) * FRET_W, cy: midY + off * STR_GAP, r: 6, fill: "var(--inlay)"
     }));
   });
 
@@ -245,7 +275,7 @@ function drawBoard() {
     }));
     if (f > 0) {
       const t = el("text", { x: PAD_L + (f - 0.5) * FRET_W, y: PAD_T - 20,
-        "text-anchor": "middle", "font-size": 12, fill: "#888" });
+        "text-anchor": "middle", "font-size": 12, fill: "var(--muted)" });
       t.textContent = f;
       svg.appendChild(t);
     }
@@ -263,7 +293,7 @@ function drawBoard() {
     // the marker when it is in — the notes draw on top of the board.
     const lbl = el("text", {
       x: fretX(0), y: y + 4, "text-anchor": "middle",
-      "font-size": 13, fill: "#666", "font-weight": 600,
+      "font-size": 13, fill: "var(--muted)", "font-weight": 600,
     });
     lbl.textContent = tuning[i];
     svg.appendChild(lbl);
@@ -276,7 +306,7 @@ function drawBoard() {
   // The run's connecting line sits under the note markers.
   pathLayer = el("g", { id: "pathLayer" });
   pathLine = el("polyline", {
-    points: "", fill: "none", stroke: "var(--root)", "stroke-width": 3,
+    points: "", fill: "none", stroke: "var(--band-4)", "stroke-width": 3,
     "stroke-linecap": "round", "stroke-linejoin": "round", opacity: 0,
   });
   pathLayer.appendChild(pathLine);
@@ -292,19 +322,20 @@ function drawBoard() {
   handleGroup = el("g", { class: "win-handle" });
   handleBar = el("rect", {
     class: "bar", x: 0, y: HANDLE_Y, width: 0, height: HANDLE_H,
-    rx: HANDLE_H / 2, fill: "var(--root)", opacity: 0.75,
+    rx: 2, fill: "url(#sunsetBar)", opacity: 0.92,
   });
   handleGroup.appendChild(handleBar);
   handleLabel = el("text", {
     x: 12, y: HANDLE_Y + HANDLE_H / 2 + 4,
-    "font-size": 12, "font-weight": 700, fill: "#fff",
+    "font-size": 12, "font-weight": 700, fill: "var(--band-4)",
+    "letter-spacing": 0.5,
   });
   handleGroup.appendChild(handleLabel);
   // Grip lines sit at a fixed spot near the left, so only the bar's width
   // has to change as the band grows or shrinks.
   [52, 58, 64].forEach(x => handleGroup.appendChild(el("line", {
     x1: x, y1: HANDLE_Y + 6, x2: x, y2: HANDLE_Y + HANDLE_H - 6,
-    stroke: "#fff", "stroke-width": 2, "stroke-linecap": "round", opacity: 0.9,
+    stroke: "var(--note-ring)", "stroke-width": 2, opacity: 0.55,
   })));
   handleGroup.addEventListener("pointerdown", e => {
     if (!activeBand) return;
@@ -358,9 +389,9 @@ function renderWindowHandle() {
 function makeNote() {
   const group  = el("g", { class: "note" });
   const circle = el("circle", { class: "note-circle", cx: 0, cy: 0, r: R,
-                                stroke: "#fff", "stroke-width": 2 });
+                                stroke: "var(--note-ring)", "stroke-width": 2 });
   const label  = el("text", { class: "note-label", x: 0, y: 4,
-                              "text-anchor": "middle", "font-weight": 700, fill: "#fff" });
+                              "text-anchor": "middle", "font-weight": 700 });
   group.appendChild(circle);
   group.appendChild(label);
   return { group, circle, label };
@@ -442,10 +473,18 @@ function renderNotes(grid, mode) {
     if (isNew) rec.group.style.transition = "none";
     rec.group.style.transform = `translate(${want.x}px, ${want.y}px)`;
 
-    const text = mode === "degree" ? want.cell.degree : want.cell.name;
+    // Labels off leaves the marker itself, which is still the whole map:
+    // where the notes fall and which of them is the root.
+    const text = mode === "none" ? ""
+               : mode === "degree" ? want.cell.degree
+               : want.cell.name;
     rec.label.textContent = text;
     rec.label.setAttribute("font-size", text.length > 2 ? 10 : 12);
     rec.circle.setAttribute("fill", want.cell.isRoot ? "var(--root)" : "var(--note)");
+    // Dark ink on the pale scale tone, light on the root: the two markers
+    // are different colours, so one text colour can't serve both.
+    rec.label.setAttribute("fill",
+      want.cell.isRoot ? "var(--root-ink)" : "var(--note-ink)");
 
     if (isNew) {
       requestAnimationFrame(() => {
@@ -736,8 +775,8 @@ function clearPath() {
 }
 
 /**
- * With a position on screen, PATH starts by tracing the whole shape —
- * its lowest note up to its highest — since that is the run the position
+ * With a position on screen, the board starts by tracing the whole shape
+ * — its lowest note up to its highest — since that is the run the position
  * exists to teach. Clicking any note replaces it with a run of your own.
  */
 function autoPathForPosition(grid) {
@@ -946,17 +985,26 @@ async function playRun() {
   syncPlayButton();
 }
 
+/**
+ * There is nothing to play until a run exists, so rather than a dead
+ * button sitting there greyed out, the whole group — play, tempo, clear —
+ * appears the moment the run does and goes away with it. The line of text
+ * beside it stays either way: with no run it is the instruction for
+ * making one.
+ */
 function syncPlayButton() {
   const btn = document.getElementById("playBtn");
   if (!btn) return;
   const on = playerKind === "run";
   const can = !!pathResult && pathResult.cells.length > 1;
+
+  const group = document.getElementById("runControls");
+  if (group) group.style.display = can ? "flex" : "none";
+
   btn.disabled = !can;
-  btn.textContent = on ? "STOP" : "PLAY";
+  btn.textContent = on ? "Stop" : "Play";
   btn.classList.toggle("active", on);
-  btn.title = !can ? "Build a run first"
-            : on ? "Stop"
-            : "Hear the run, start to target";
+  btn.title = on ? "Stop" : "Hear the run, start to target";
 }
 
 /**
@@ -999,7 +1047,7 @@ function syncStrumButton() {
   const on = playerKind === "chord";
   const can = !!currentVoicing && isChordMode();
   btn.disabled = !can;
-  btn.textContent = on ? "STOP" : "PLAY";
+  btn.textContent = on ? "Stop" : "Strum";
   btn.classList.toggle("active", on);
   btn.title = !can ? "No grip to play" : on ? "Stop" : "Strum this grip";
 }
@@ -1145,7 +1193,7 @@ function renderChord(root, type, voicing, ghostRange) {
     [1, -1].forEach(dir => {
       chordLayer.appendChild(el("line", {
         x1: x - r, y1: y - r * dir, x2: x + r, y2: y + r * dir,
-        stroke: "#999", "stroke-width": 2, "stroke-linecap": "round",
+        stroke: "var(--muted)", "stroke-width": 2, "stroke-linecap": "round",
       }));
     });
   }
@@ -1159,7 +1207,7 @@ function renderChord(root, type, voicing, ghostRange) {
 function render({ animate = true } = {}) {
   const root = document.getElementById("root").value;
   const type = document.getElementById("scale").value;
-  const mode = document.getElementById("labels").value;
+  const mode = labelMode();
 
   // Chords take their own route: a grip is a set of notes held at once,
   // not a shape to run through, so positions cycle voicings instead.
@@ -1276,7 +1324,7 @@ function render({ animate = true } = {}) {
 
   // 2) If position mode is active, reduce the grid to the current box.
   //    CAGED shapes for the natural modes, searched positions otherwise.
-  //    With PATH also on, the run is confined to whatever this box holds.
+  //    A run is then confined to whatever this box holds.
   let box = null, boxCount = 0;
   activeStops = null;
   if (cagedOn) {
@@ -1343,9 +1391,9 @@ function render({ animate = true } = {}) {
   const pathLabel = document.getElementById("pathLabel");
   if (pathLabel) {
     if (!pathOn) pathLabel.textContent = "";
-    else if (!pathFrom) pathLabel.textContent = "click a note to start";
-    else if (!pathTo) pathLabel.textContent = "now click the note to reach";
-    else if (!pathResult) pathLabel.textContent = "no playable run between those";
+    else if (!pathFrom) pathLabel.textContent = "Click a note to start a run";
+    else if (!pathTo) pathLabel.textContent = "Now click the note to finish on";
+    else if (!pathResult) pathLabel.textContent = "No playable run between those two";
     else {
       const frets = pathResult.cells.map(c => c.fret);
       const locked = pathStops.filter(s => s.locked).length;
@@ -1384,12 +1432,13 @@ function render({ animate = true } = {}) {
 // ============================================================
 
 // The button names whichever system applies to the current scale:
-// CAGED for the natural modes, POSITION for everything else.
+// CAGED for the natural modes, positions for everything else. A toggle
+// that is on is filled rather than relabelled, so the button goes on
+// saying what it does.
 function syncCagedControls() {
   const type   = document.getElementById("scale").value;
   const chords = isChordMode();
   const caged  = supportsCaged(type);
-  const name   = chords ? "VOICINGS" : caged ? "CAGED" : "POSITION";
   const btn    = document.getElementById("cagedBtn");
   const nav    = document.getElementById("cagedNav");
 
@@ -1401,29 +1450,22 @@ function syncCagedControls() {
       ? "Show one CAGED shape at a time"
       : "CAGED doesn't apply to this scale — showing playable hand positions";
   btn.classList.toggle("active", chords || cagedOn);
-  btn.textContent = (chords || cagedOn) ? `${name}: on` : name;
+  btn.textContent = chords ? "Voicings" : caged ? "CAGED" : "Positions";
   nav.style.display = (chords || cagedOn) ? "flex" : "none";
 
-  // Runs are for scales and arpeggios; a chord isn't travelled through.
-  const pathBtn = document.getElementById("pathBtn");
-  const pathNav = document.getElementById("pathNav");
-  if (chords) { pathOn = false; clearPath(); }
-  pathBtn.disabled = chords;
-  pathBtn.classList.toggle("active", pathOn);
-  pathBtn.textContent = pathOn ? "PATH: on" : "PATH";
-  pathBtn.title = chords
-    ? "Runs apply to scales and arpeggios, not to chord grips"
-    : cagedOn
-      ? "Trace a run inside the position on screen"
-      : "Pick a starting note and a target note to build a run";
-  pathNav.style.display = pathOn ? "flex" : "none";
+  // A scale or an arpeggio is something you travel through, so picking a
+  // run is simply what the board does — there is nothing to switch on. A
+  // chord is held rather than travelled through, so it is off there.
+  const wasOn = pathOn;
+  pathOn = !chords;
+  if (!pathOn && wasOn) clearPath();
+  document.getElementById("pathNav").style.display = pathOn ? "flex" : "none";
   document.getElementById("board").classList.toggle("picking", pathOn);
 
   const ghostField = document.getElementById("ghostField");
   const ghostBtn   = document.getElementById("ghostBtn");
   ghostField.style.display = chords ? "flex" : "none";
   ghostBtn.classList.toggle("active", ghostOn);
-  ghostBtn.textContent = ghostOn ? "GHOST: on" : "GHOST";
   ghostBtn.title = chords && ghostOn
     ? "Click a note to silence it, or a faint one to play it instead"
     : "Show the chord's other tones faintly, wherever they fall";
@@ -1442,12 +1484,24 @@ function syncCagedControls() {
   openField.style.display = chords ? "flex" : "none";
   openBtn.disabled = !canOpen;
   openBtn.classList.toggle("active", openOn);
-  openBtn.textContent = openOn ? "OPEN: on" : "OPEN";
   openBtn.title = !canOpen
     ? "No open string belongs to this chord"
     : openOn
       ? "Open strings may ring under a grip anywhere on the neck"
       : "Open strings only where the window reaches the nut";
+
+  // The legend names what is actually on the board, and says what the
+  // board does when you touch it — which is a different thing in each
+  // mode, so it can't be printed once and left there.
+  const tone = document.getElementById("legendTone");
+  const tip  = document.getElementById("legendTip");
+  if (tone) tone.textContent = chords ? "Chord tone" : "Scale tone";
+  if (tip) {
+    tip.textContent = chords
+      ? (ghostOn ? "Click a note to silence it, or a faint one to play it instead"
+                 : "Step through the grips, or drag the bar along the neck")
+      : "Click two notes to trace a run · drag any note to reshape it";
+  }
 
   // Strumming is a chord idea too. Leaving chord mode leaves no grip to
   // play, so the button has nothing to refer to.
@@ -1501,7 +1555,22 @@ function initControls() {
       syncCagedControls();
       render();
     }));
-  document.getElementById("labels").addEventListener("change", render);
+  // Note names -> scale degrees -> nothing, and round again.
+  const labelsBtn = document.getElementById("labelsBtn");
+  const syncLabelsBtn = () => {
+    const { text, hint } = LABEL_MODES[labelIndex];
+    labelsBtn.textContent = text;
+    labelsBtn.title = hint;
+    // Hidden is the only one of the three that changes the board rather
+    // than what it says, so it is the only one that reads as switched on.
+    labelsBtn.classList.toggle("active", labelMode() === "none");
+  };
+  labelsBtn.addEventListener("click", () => {
+    labelIndex = (labelIndex + 1) % LABEL_MODES.length;
+    syncLabelsBtn();
+    render();
+  });
+  syncLabelsBtn();
 
   document.getElementById("cagedBtn").addEventListener("click", () => {
     cagedOn = !cagedOn;
@@ -1542,12 +1611,6 @@ function initControls() {
   });
 
 
-  document.getElementById("pathBtn").addEventListener("click", () => {
-    pathOn = !pathOn;
-    clearPath();
-    syncCagedControls();
-    render();
-  });
   document.getElementById("clearPath").addEventListener("click", () => {
     clearPath();
     skipAutoPath = true;      // leave the board empty for hand-picking
