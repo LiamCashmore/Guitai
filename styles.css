@@ -1,14 +1,18 @@
 /* ============================================================
    Guitai — fretboard visualizer
-   Sunset stripes on black: the six bands run from red down through
-   gold and cream into deep teal, and they are the only decoration
-   the interface gets. Everything else is a dark chip with cream
-   type, so the neck stays the brightest thing on the page.
+   Sunset stripes, on black at night and on paper by day. The six
+   bands never change: they are the identity, and they hold up over
+   either field. Only the chrome around them flips.
+
+   The neck itself stays ebony in both modes — a fretboard is dark,
+   and inverting it would make the one thing you're reading the one
+   thing that keeps moving.
    ============================================================ */
 
 :root {
-  /* The six bands, top to bottom. Named for where they sit in the
-     sunset, so a band can be reached for by position, not by hue. */
+  /* ---- The six bands, top to bottom. Named for where they sit in
+     the sunset, so a band can be reached for by position, not hue.
+     These are fixed; both themes are built on them. ---- */
   --band-1: #e14434;   /* red      */
   --band-2: #ee7b30;   /* orange   */
   --band-3: #f2b333;   /* gold     */
@@ -16,18 +20,25 @@
   --band-5: #2e9d8f;   /* teal     */
   --band-6: #1d6a78;   /* deep sea */
 
+  /* Band 4 is cream, and in day mode cream is the paper — the stripe
+     would show a gap where it fell. So the stripe keeps its own fourth
+     colour and swaps in the reference's olive when the page is pale.
+     Only the stripe uses it; the board goes on using real cream. */
+  --stripe-4: var(--band-4);
+
   /* Hard stops, never blended — the reference prints them as flat
      bands and a soft gradient would read as a different decade. */
   --sunset: linear-gradient(
     180deg,
     var(--band-1) 0 17%, var(--band-2) 17% 34%, var(--band-3) 34% 55%,
-    var(--band-4) 55% 72%, var(--band-5) 72% 87%, var(--band-6) 87% 100%);
+    var(--stripe-4) 55% 72%, var(--band-5) 72% 87%, var(--band-6) 87% 100%);
   --sunset-x: linear-gradient(
     90deg,
     var(--band-1) 0 17%, var(--band-2) 17% 34%, var(--band-3) 34% 55%,
-    var(--band-4) 55% 72%, var(--band-5) 72% 87%, var(--band-6) 87% 100%);
+    var(--stripe-4) 55% 72%, var(--band-5) 72% 87%, var(--band-6) 87% 100%);
 
-  /* Board */
+  /* ---- The board. Ebony either way, so these sit outside the
+     themes and are declared once. ---- */
   --wood: #191920;
   --wood-edge: #000000;
   --wire: #7c7871;
@@ -35,28 +46,58 @@
   --string: #b3ab99;
   --inlay: #55503f;
 
-  /* Notes */
   --root: #e14434;
   --root-ink: #fdf3df;
   --note: #f2b333;
   --note-ink: #17160f;
   --note-ring: #0b0b0d;      /* the black between the bands */
 
-  /* Interface */
-  --bg: #0b0b0d;
-  --surface: #141419;
-  --surface-quiet: #101014;
-  --line: #2b2b33;
-  --text: #f3e6c8;
-  --muted: #94897a;
-  --focus: var(--band-3);
+  /* Ink dark enough to sit on any band — labels on filled buttons. */
+  --on-band: #17160f;
 
   --r: 3px;                  /* barely rounded: this era used a ruler */
-  --lift: 3px 3px 0 var(--band-6);
 
   /* Motion (JS mirrors these durations — see FADE_MS / SLIDE_MS) */
   --slide: 360ms cubic-bezier(0.45, 0.03, 0.25, 1);
   --fade: 240ms ease;
+}
+
+/* ---- Night: the reference's own field ---------------------- */
+:root, [data-theme="night"] {
+  --bg: #0b0b0d;
+  --surface: #141419;
+  --surface-quiet: #101014;
+  --chip: #0d0d11;
+  --line: #2b2b33;
+  --line-hover: #45454f;
+  --text: #f3e6c8;
+  --muted: #94897a;
+  --accent-text: var(--band-3);      /* gold reads on black */
+  --readout-strong: var(--band-4);
+  --focus: var(--band-3);
+  --lift: var(--band-6);             /* the offset block behind a toggle */
+  --grain: 0.16;
+}
+
+/* ---- Day: the same print, on newsprint --------------------- */
+/* The cream band becomes the paper, and the accents deepen — gold on
+   cream is unreadable, so the label colour drops to a burnt red that
+   holds the same place in the palette. */
+[data-theme="day"] {
+  --bg: #efe3c9;
+  --surface: #fbf4e2;
+  --surface-quiet: #f4ead1;
+  --chip: #fffbf0;
+  --line: #d6c5a1;
+  --line-hover: #b09a6d;
+  --text: #17160f;
+  --muted: #7c6b50;
+  --accent-text: #b03d1c;
+  --readout-strong: #3a3222;
+  --focus: var(--band-6);
+  --lift: var(--band-1);
+  --grain: 0.09;
+  --stripe-4: #a8a85a;               /* olive, where cream would vanish */
 }
 
 * { box-sizing: border-box; }
@@ -70,6 +111,7 @@ body {
   margin: 0;
   padding: 30px 24px 44px;
   -webkit-tap-highlight-color: transparent;
+  transition: background 220ms ease, color 220ms ease;
 }
 
 /* The print grain from the reference: one still layer of noise over
@@ -81,7 +123,7 @@ body::after {
   inset: 0;
   z-index: 9;
   pointer-events: none;
-  opacity: 0.16;
+  opacity: var(--grain);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
@@ -130,6 +172,36 @@ body::after {
   color: var(--muted);
 }
 
+/* ---- Sun / moon switch ------------------------------------- */
+/* Sits out at the far right, away from the controls that change the
+   board — it changes the room, not the music. */
+.theme-toggle {
+  margin-left: auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.theme-toggle svg { display: block; }
+.theme-toggle .glyph-day { display: none; }
+[data-theme="night"] .theme-toggle .glyph-day { display: block; }
+[data-theme="night"] .theme-toggle .glyph-night { display: none; }
+
+/* The theme toggle sits opposite the wordmark: the same sun, drawn as
+   a half-disc, filling and emptying as the page turns over. */
+.theme-toggle {
+  margin-left: auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 14px 9px 11px;
+}
+
+.theme-toggle svg { display: block; flex: none; }
+
 /* ---- Panels ------------------------------------------------ */
 /* Two bands: what you're looking at, then what you can do to it. */
 .panel {
@@ -171,7 +243,7 @@ body::after {
   font-weight: 700;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--band-3);
+  color: var(--accent-text);
 }
 
 /* Controls that belong together and travel together. */
@@ -189,8 +261,8 @@ body::after {
   width: 7px;
   height: 7px;
   margin-top: -5px;
-  border-right: 2px solid var(--band-3);
-  border-bottom: 2px solid var(--band-3);
+  border-right: 2px solid var(--accent-text);
+  border-bottom: 2px solid var(--accent-text);
   transform: rotate(45deg);
   pointer-events: none;
 }
@@ -207,12 +279,12 @@ select {
   color: var(--text);
   border: 1.5px solid var(--line);
   border-radius: var(--r);
-  background: #0d0d11;
+  background: var(--chip);
   cursor: pointer;
 }
 
-select:hover { border-color: #45454f; }
-option { background: #14141a; color: var(--text); }
+select:hover { border-color: var(--line-hover); }
+option { background: var(--chip); color: var(--text); }
 
 /* ---- Buttons ----------------------------------------------- */
 /* Flat chips, uppercase and spaced out. Nothing gradients, nothing
@@ -228,12 +300,15 @@ button {
   color: var(--text);
   border: 1.5px solid var(--line);
   border-radius: var(--r);
-  background: #0d0d11;
+  background: var(--chip);
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
-button:hover:not(:disabled) { border-color: var(--band-3); color: var(--band-3); }
+button:hover:not(:disabled) {
+  border-color: var(--accent-text);
+  color: var(--accent-text);
+}
 button:disabled { opacity: 0.32; cursor: not-allowed; }
 
 :where(button, select, input):focus-visible {
@@ -263,13 +338,13 @@ button:disabled { opacity: 0.32; cursor: not-allowed; }
 .btn.active {
   background: var(--band-2);
   border-color: var(--band-2);
-  color: #17160f;
-  box-shadow: var(--lift);
+  color: var(--on-band);
+  box-shadow: 3px 3px 0 var(--lift);
 }
 .btn.active:hover:not(:disabled) {
   background: var(--band-3);
   border-color: var(--band-3);
-  color: #17160f;
+  color: var(--on-band);
 }
 
 /* The two buttons that make sound wear the transport symbol, so the one
@@ -277,7 +352,7 @@ button:disabled { opacity: 0.32; cursor: not-allowed; }
 .btn-accent {
   display: inline-flex;
   align-items: center;
-  border-color: #3a3a45;
+  border-color: var(--line-hover);
 }
 .btn-accent::before {
   content: "";
@@ -288,14 +363,14 @@ button:disabled { opacity: 0.32; cursor: not-allowed; }
   border-top: 6px solid transparent;
   border-bottom: 6px solid transparent;
 }
-.btn-accent:hover:not(:disabled)::before { border-left-color: var(--band-3); }
+.btn-accent:hover:not(:disabled)::before { border-left-color: var(--accent-text); }
 .btn-accent.active::before {
   border: 0;
   width: 10px;
   height: 10px;
-  background: #17160f;
+  background: var(--on-band);
 }
-.btn-accent.active:hover:not(:disabled)::before { background: #17160f; }
+.btn-accent.active:hover:not(:disabled)::before { background: var(--on-band); }
 .btn-accent:disabled::before { border-left-color: var(--muted); }
 
 /* ---- Sliders ----------------------------------------------- */
@@ -351,7 +426,7 @@ input[type="range"]::-moz-range-thumb {
   white-space: nowrap;
 }
 
-#posLabel { min-width: 200px; text-align: center; color: var(--band-4); }
+#posLabel { min-width: 200px; text-align: center; color: var(--readout-strong); }
 #bpmLabel { min-width: 22px; }
 #spreadLabel { min-width: 44px; }
 
@@ -515,6 +590,11 @@ input[type="range"]::-moz-range-thumb {
   .masthead h1 { font-size: 27px; }
   .masthead p { display: none; }
 
+  /* The switch keeps its glyph and drops its word — at this size the
+     sun and the moon are doing the explaining anyway. */
+  .theme-toggle { gap: 0; padding: 9px 11px; }
+  .theme-toggle .label { display: none; }
+
   .panel { gap: 10px; padding: 14px 12px 12px; }
   .field { flex: 1 1 calc(50% - 5px); }
   .field.wide { flex: 1 1 100%; }
@@ -536,6 +616,7 @@ input[type="range"]::-moz-range-thumb {
 
 /* ---- Reduced motion ---------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
+  body { transition: none; }
   .note, .note-circle, #posHighlight { transition: opacity var(--fade); }
   .note.is-sounding .note-circle { transition: none; transform: none; }
   .win-handle, .win-handle .bar { transition: none; }

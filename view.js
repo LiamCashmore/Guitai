@@ -102,6 +102,39 @@ function playedSpan(grid, box) {
   return lo === null ? null : { lo, hi };
 }
 
+// ---- Day and night ----------------------------------------
+/**
+ * The six bands hold up on either field, so the theme moves only the
+ * chrome around them — and never the board, which stays ebony because a
+ * fretboard is dark and inverting the one thing you are reading would
+ * be a strange thing to do to it.
+ *
+ * The starting theme is whatever the machine already asked for. Nothing
+ * is remembered between visits: this is a preference the operating
+ * system already holds, and asking twice would be asking twice.
+ */
+const prefersDay = window.matchMedia?.("(prefers-color-scheme: light)");
+let theme = prefersDay?.matches ? "day" : "night";
+
+function applyTheme() {
+  document.documentElement.setAttribute("data-theme", theme);
+
+  const label = document.getElementById("themeLabel");
+  const fill  = document.getElementById("themeSunFill");
+  const btn   = document.getElementById("themeBtn");
+  // The button names the field you would move to, not the one you are
+  // standing in — a control says what happens when you press it.
+  const going = theme === "night" ? "Day" : "Night";
+  if (label) label.textContent = going;
+  if (btn) btn.title = `Switch to ${going.toLowerCase()}`;
+  // Sun up for day, sun down for night.
+  if (fill) {
+    fill.setAttribute("d", theme === "night"
+      ? "M1 8 A7 7 0 0 0 15 8 Z"
+      : "M1 8 A7 7 0 0 1 15 8 Z");
+  }
+}
+
 // ---- View state -------------------------------------------
 let cagedOn  = false;
 let posIndex = 0;
@@ -228,7 +261,7 @@ function drawBoard() {
   // ends exactly where the next begins, with nothing blended between.
   const defs = el("defs", {});
   const grad = el("linearGradient", { id: "sunsetBar", x1: "0", y1: "0", x2: "1", y2: "0" });
-  const BANDS = ["--band-1", "--band-2", "--band-3", "--band-4", "--band-5", "--band-6"];
+  const BANDS = ["--band-1", "--band-2", "--band-3", "--stripe-4", "--band-5", "--band-6"];
   BANDS.forEach((band, i) => {
     const from = i / BANDS.length, to = (i + 1) / BANDS.length;
     grad.appendChild(el("stop", { offset: from, "stop-color": `var(${band})` }));
@@ -1572,6 +1605,20 @@ function initControls() {
   });
   syncLabelsBtn();
 
+  // Following the machine holds only until you say otherwise: once the
+  // button is pressed, that choice stands for the rest of the session.
+  let chosen = false;
+  document.getElementById("themeBtn").addEventListener("click", () => {
+    chosen = true;
+    theme = theme === "night" ? "day" : "night";
+    applyTheme();
+  });
+  prefersDay?.addEventListener?.("change", e => {
+    if (chosen) return;
+    theme = e.matches ? "day" : "night";
+    applyTheme();
+  });
+
   document.getElementById("cagedBtn").addEventListener("click", () => {
     cagedOn = !cagedOn;
     posIndex = 0;
@@ -1639,6 +1686,7 @@ function initControls() {
   document.addEventListener("pointerup", endDrag);
   document.addEventListener("pointercancel", endDrag);
 
+  applyTheme();
   syncCagedControls();
   render();
 }

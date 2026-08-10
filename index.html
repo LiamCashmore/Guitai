@@ -26,6 +26,17 @@
       </svg>
       <h1>Guitai</h1>
       <p>Scales · Arpeggios · Chords</p>
+
+      <button id="themeBtn" class="btn theme-toggle" type="button">
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <!-- Sun above the horizon by day, below it by night. The
+               half that's filled is the half of the day you're in. -->
+          <circle cx="8" cy="8" r="7" fill="none"
+                  stroke="currentColor" stroke-width="1.6" />
+          <path id="themeSunFill" d="M1 8 A7 7 0 0 1 15 8 Z" fill="currentColor" />
+        </svg>
+        <span id="themeLabel">Day</span>
+      </button>
     </header>
 
     <!-- What you're looking at. Always relevant, so it always shows. -->
