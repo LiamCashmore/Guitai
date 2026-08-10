@@ -932,6 +932,15 @@ function cagedGrip(voicing, degrees) {
   return null;
 }
 
+// The tones that colour a chord rather than define it. The alterations
+// of the fifth are not here: a b5 or #5 is a fifth, however bent, and it
+// sits where a fifth sits.
+const EXTENSIONS = new Set(["9", "b9", "#9", "11", "#11", "13", "b13"]);
+
+// Strings below this are the chord's foundation — the sixth, fifth and
+// fourth, where an extension muddies rather than colours.
+const LOW_REGISTER = 3;
+
 /**
  * How hard this grip is to play, as a number — lower is easier.
  *
@@ -977,16 +986,48 @@ function voicingEase(voicing, degrees) {
 
   if (voicing.bass === "1") score -= 2;
 
-  // Fullness, weighted hard. A chord on the top three strings is a real
-  // thing a player uses, but it is not what you show someone asking how
-  // to play the chord — the six- and five-string grips are, and the top
-  // three are what you reach for once you already know them.
-  score += { 6: -3, 5: -2, 4: -0.5, 3: 2 }[strings.length] ?? 3;
+  // How many strings should sound depends on what the chord is.
+  //
+  // A triad wants to be full: six and five string grips are what you show
+  // someone asking how to play it, and the top three are what they reach
+  // for later. But a thirteenth is four or five notes of information, and
+  // spreading it over six strings means doubling — which on a dense chord
+  // means the root or fifth sounding twice against notes a tone apart
+  // from them. Four notes is what a guitarist actually plays there, and
+  // it is why the shell voicings exist.
+  const dense = degrees.length >= 5;
+  score += dense
+    ? ({ 6: 2, 5: 0.5, 4: -1.5, 3: 0.5 }[strings.length] ?? 2)
+    : ({ 6: -3, 5: -2, 4: -0.5, 3: 2 }[strings.length] ?? 3);
   score += strings[0] * 0.2;       // a run reaching the bass strings is fuller
 
   // Every tone the chord names should be sounding if the hand allows it.
   const sounded = new Set(notes.map(n => n.degree));
   score += degrees.filter(d => !sounded.has(d)).length * 1.2;
+
+  // Where the extensions sit.
+  //
+  // A guitar is not a piano: the low strings are thick and close
+  // together, and a ninth or a thirteenth down there beats against the
+  // root instead of colouring it. So the bottom of a chord is built from
+  // the tones that define it — root, third, fifth, seventh — and the
+  // extensions go on top, where the strings are thin and far enough
+  // apart in pitch to let them ring as colour.
+  //
+  // A13 is the shape this produces: root on the sixth string, seventh on
+  // the fourth, third on the third, and the thirteenth alone on the
+  // second, up where it belongs. The penalty falls away entirely above
+  // the D string, so nothing is being forced upward — only stopped from
+  // sitting in the bass.
+  cells.forEach((cell, i) => {
+    if (!EXTENSIONS.has(notes[i].degree)) return;
+    score += Math.max(0, LOW_REGISTER - cell.string) * 1.3;
+  });
+
+  // And an extension underneath everything is not a voicing of the chord
+  // so much as a different chord — a 13th in the bass says the thirteenth
+  // is the root and the ear believes it.
+  if (EXTENSIONS.has(voicing.bass)) score += 3;
 
   // Doubling the root or the fifth is how guitars have always voiced
   // chords. Doubling anything else spends a string on nothing.
@@ -1074,11 +1115,31 @@ function fullVoicings(root, type, { openAnywhere = false } = {}) {
       options.push(frets);
     }
 
+    // Which strings sound. Neighbouring runs, mostly — but also runs with
+    // the string just above the bass left out, because that is how a
+    // guitarist voices anything dense. Putting the root on the sixth and
+    // the rest on the fourth, third and second leaves the fifth string
+    // silent under the hand, and it is silent because the finger holding
+    // the root leans against it. That grip is most of the jazz vocabulary
+    // and it cannot be built out of neighbouring strings alone.
+    const stringSets = [];
     for (let first = 0; first < numStrings; first++) {
       for (let last = first + 2; last < numStrings; last++) {
-        const strings = [];
-        for (let s = first; s <= last; s++) strings.push(s);
-        if (strings.some(s => options[s].length === 0)) continue;
+        const run = [];
+        for (let s = first; s <= last; s++) run.push(s);
+        stringSets.push(run);
+        // The same run with the string above the bass muted. Only worth
+        // having if three still sound, and only where the bass is
+        // fretted — an open string has no finger leaning off it, so
+        // there is nothing to damp its neighbour with.
+        if (last - first >= 3 && !options[first].every(f => f === 0)) {
+          stringSets.push([first, ...run.slice(2)]);
+        }
+      }
+    }
+
+    for (const strings of stringSets) {
+      if (strings.some(s => options[s].length === 0)) continue;
 
         const chosen = [];
         (function choose(i) {
@@ -1086,6 +1147,11 @@ function fullVoicings(root, type, { openAnywhere = false } = {}) {
             const cells = strings.map((string, k) => ({ string, fret: chosen[k] }));
             const stopped = cells.filter(c => c.fret > 0);
             if (stopped.length === 0) return;
+            // A gap only works if the finger on the bass note can lie
+            // against the silent string. An open bass has no finger on
+            // it, so there is nothing to do the muting.
+            const gapped = strings.at(-1) - strings[0] + 1 > strings.length;
+            if (gapped && cells[0].fret === 0) return;
             // Anchor here, so each grip is counted once.
             if (Math.min(...stopped.map(c => c.fret)) !== lo) return;
 
@@ -1136,9 +1202,8 @@ function fullVoicings(root, type, { openAnywhere = false } = {}) {
             });
             return;
           }
-          for (const f of options[strings[i]]) { chosen[i] = f; choose(i + 1); }
-        })(0);
-      }
+        for (const f of options[strings[i]]) { chosen[i] = f; choose(i + 1); }
+      })(0);
     }
   }
   // Up the neck. At the same fret, root position leads — it is what a
