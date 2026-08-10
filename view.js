@@ -25,11 +25,12 @@ import {
   pitchAt,
   chordVoicings,
   rankVoicings,
+  progressionVoicings,
   hasOpenVoicing,
   gripFingering,
 } from "./music.js";
 
-import { unlock, playSequence, playChord, strumGap, clock } from "./audio.js";
+import { unlock, playSequence, playChord, playProgression, strumGap, clock } from "./audio.js";
 
 // ---- Visual config ----------------------------------------
 const markerFrets = [3, 5, 7, 9, 15, 17];   // single inlay dots
@@ -164,6 +165,23 @@ const labelMode = () => LABEL_MODES[labelIndex].mode;
 // dragged along the neck by the bar above it.
 const WINDOW_WIDTH = 5;
 let winLo = 0;
+
+// ---- Staying put ------------------------------------------
+/**
+ * Where the hand is, in frets — kept across a change of material.
+ *
+ * A player working at the fifth fret who switches from major to minor,
+ * or to the arpeggio, or to the chord, has not moved their hand. They
+ * are asking what else is available where they already are. So the fret
+ * is the thing that persists and the shape is the thing that changes,
+ * rather than the other way around.
+ *
+ * The two modes measure position differently — scales step between whole
+ * shapes, chords slide a window — so the fret is what passes between
+ * them, and each side reads it in its own terms when it takes over.
+ */
+let anchorFret = 0;
+let seekAnchor = false;
 
 // Ghosts: the chord's other tones, shown faintly around the grip so you
 // can see what else was available to reach for.
@@ -1171,15 +1189,54 @@ async function strumChord() {
   syncStrumButton();
 }
 
+/**
+ * Play a progression through, chord after chord.
+ *
+ * The board follows the sound: each chord is shown as it arrives, so the
+ * grip on screen is the grip being heard. That is the point of choosing
+ * them as a sequence — the movement between them is the thing worth
+ * watching, and it can only be watched if the board keeps up.
+ */
+async function playProgressionThrough() {
+  // Whatever route is on the board — the cache holds the one the current
+  // window asked for, so this cannot drift out of step with the display.
+  const chords = progressionCache.chords;
+  if (!chords.length) return;
+  if (!(await unlock())) return;
+
+  const t = Number(document.getElementById("spread")?.value ?? 60) / 100;
+  const groups = chords.map(v => v.cells.slice()
+    .sort((a, b) => a.string - b.string)      // string 0 is the low E
+    .map(c => ({ midi: pitchAt(c), string: c.string, key: cellId(c) })));
+
+  player = playProgression(groups, {
+    gap: strumGap(t),
+    onChord: c => {
+      posIndex = c;
+      render();
+      showSounding(new Set(groups[c].map(n => n.key)));
+    },
+    onEnd: () => {
+      player = null; playerKind = null; playingSig = null;
+      showSounding(new Set());
+      syncStrumButton();
+    },
+  });
+  playerKind = "progression";
+  syncStrumButton();
+}
+
 function syncStrumButton() {
   const btn = document.getElementById("strumBtn");
   if (!btn) return;
-  const on = playerKind === "chord";
-  const can = !!currentVoicing && isChordMode();
+  const walk = isProgressionMode();
+  const on = playerKind === "chord" || playerKind === "progression";
+  const can = !!currentVoicing && (isChordMode() || walk);
   btn.disabled = !can;
-  btn.textContent = on ? "Stop" : "Strum";
+  btn.textContent = on ? "Stop" : walk ? "Play" : "Strum";
   btn.classList.toggle("active", on);
-  btn.title = !can ? "No grip to play" : on ? "Stop" : "Strum this grip";
+  btn.title = !can ? "No grip to play" : on ? "Stop"
+    : walk ? "Play the progression through" : "Strum this grip";
 }
 
 // ============================================================
@@ -1187,6 +1244,20 @@ function syncStrumButton() {
 // ============================================================
 
 const isChordMode = () => document.getElementById("kind").value === "chord";
+const isProgressionMode = () =>
+  document.getElementById("kind").value === "progression";
+
+// A progression is solved whole, so it is worked out once per key and
+// preset rather than per render — the search is cheap but not free, and
+// nothing about it changes while you step through the chords.
+let progressionCache = { key: null, chords: [] };
+function progressionFor(key, name, window = null) {
+  const cacheKey = `${key}|${name}|${window ? window.lo : "free"}`;
+  if (progressionCache.key !== cacheKey) {
+    progressionCache = { key: cacheKey, chords: progressionVoicings(key, name, { window }) };
+  }
+  return progressionCache.chords;
+}
 
 /**
  * The grip as it should be shown: the computed one, unless it has been
@@ -1362,7 +1433,94 @@ function render({ animate = true } = {}) {
 
   // Chords take their own route: a grip is a set of notes held at once,
   // not a shape to run through, so positions cycle voicings instead.
+  // ---- A progression ---------------------------------------
+  // The grips are already decided — chosen together, so that the hand
+  // moves as little as possible getting through them — so there is
+  // nothing to search here. Stepping forward is stepping along the route
+  // the search found.
+  if (isProgressionMode()) {
+    // Coming from a scale, the progression opens where the hand was left.
+    if (seekAnchor) {
+      winLo = Math.max(0, Math.min(numFrets - WINDOW_WIDTH + 1, anchorFret));
+      seekAnchor = false;
+    }
+    const winHi = winLo + WINDOW_WIDTH - 1;
+
+    // A new key, preset or stretch of neck is a new route; show it from
+    // its first chord.
+    if (progressionCache.key !== `${root}|${type}|${winLo}`) posIndex = 0;
+    const chords = progressionFor(root, type, { lo: winLo, hi: winHi });
+    // Nothing but the grip is drawn, so the board starts empty rather
+    // than from a scale: the progression's name is not a chord type and
+    // there is no grid to build from it.
+    let grid = Array.from({ length: numStrings }, () => Array(numFrets + 1).fill(null));
+    let voicing = null;
+
+    if (chords.length) {
+      posIndex = Math.max(0, Math.min(posIndex, chords.length - 1));
+      voicing = chords[posIndex];
+      grid = renderChord(voicing.root, voicing.type, voicing, null);
+    } else {
+      chordLayer.innerHTML = "";
+      ghostCells = new Set();
+    }
+    currentBase = voicing;
+    currentVoicing = voicing;
+    if (playerKind === "chord" && voicingSig(voicing) !== playingSig) stopSound();
+    syncStrumButton();
+
+    // The handle slides the neck exactly as it does for chords: it says
+    // where the hand is, and the progression is solved to sit there. It
+    // is not a stepper through the chords — the arrows are that — because
+    // a progression has no positions of its own to stop at.
+    activeStops = null;
+    activeBand = { lo: winLo, hi: Math.min(winHi, numFrets) };
+    anchorFret = winLo;
+    if (activeBand) {
+      const { x1, x2 } = bandEdges(activeBand.lo, activeBand.hi);
+      const topY = stringY(numStrings - 1), botY = stringY(0);
+      highlight.setAttribute("x", x1);
+      highlight.setAttribute("width", x2 - x1);
+      highlight.setAttribute("y", topY - 24);
+      highlight.setAttribute("height", (botY - topY) + 48);
+      highlight.setAttribute("opacity", 0.12);
+    } else {
+      highlight.setAttribute("opacity", 0);
+    }
+    renderWindowHandle();
+    renderNotes(grid, mode);
+    renderPathLine({ animate: false });
+
+    const posLabel = document.getElementById("posLabel");
+    if (posLabel) {
+      posLabel.classList.remove("unplayable");
+      if (!voicing) {
+        posLabel.textContent = "no grips found for this progression";
+      } else {
+        // The numeral says what the chord is doing, the symbol says what
+        // to call it, and the rest is what the hand has to do — which is
+        // the whole reason these particular grips were chosen.
+        const shape = voicing.shape ? ` · ${voicing.shape} shape` : "";
+        const hand = voicing.barre ? " · barre"
+          : voicing.cells.some(c => c.fret === 0) ? " · open" : "";
+        posLabel.textContent =
+          `${posIndex + 1}/${chords.length} · ${voicing.numeral} · ${voicing.symbol}` +
+          shape + hand;
+      }
+    }
+    const prevB = document.getElementById("prevPos");
+    const nextB = document.getElementById("nextPos");
+    if (prevB) prevB.disabled = posIndex <= 0;
+    if (nextB) nextB.disabled = posIndex >= chords.length - 1;
+    return;
+  }
+
   if (isChordMode()) {
+    // Coming from a scale, the window opens where the hand was left.
+    if (seekAnchor) {
+      winLo = Math.max(0, Math.min(numFrets - WINDOW_WIDTH + 1, anchorFret));
+      seekAnchor = false;
+    }
     const winHi = winLo + WINDOW_WIDTH - 1;
     // Full grips: every string sounds and notes may double, which is what
     // the open and barre shapes a guitarist actually plays are made of.
@@ -1414,6 +1572,7 @@ function render({ animate = true } = {}) {
     // Show the stretch being searched, the same band the positions use.
     activeStops = null;                    // chords slide a window instead
     activeBand = { lo: winLo, hi: Math.min(winHi, numFrets) };
+    anchorFret = winLo;
     {
       const { x1, x2 } = bandEdges(activeBand.lo, activeBand.hi);
       const topY = stringY(numStrings - 1), botY = stringY(0);
@@ -1487,6 +1646,15 @@ function render({ animate = true } = {}) {
       return trimmed ? trimmed.lo : b.lo;
     });
     if (boxCount > 0) {
+      // Material has changed underneath: find the shape sitting where the
+      // hand already is. Which shape it is by number means nothing across
+      // the change — a scale has seven positions and its arpeggio has
+      // five — but the fret means the same thing to both.
+      if (seekAnchor) {
+        posIndex = activeStops.reduce((best, stop, i) =>
+          Math.abs(stop - anchorFret) < Math.abs(activeStops[best] - anchorFret) ? i : best, 0);
+        seekAnchor = false;
+      }
       posIndex = Math.max(0, Math.min(posIndex, boxCount - 1));
       box = found.boxes[posIndex];
       grid = getShapeGrid(root, type, box);
@@ -1497,6 +1665,10 @@ function render({ animate = true } = {}) {
   const span = box ? playedSpan(grid, box) : null;
   // The handle rides this band, keeping each position's own width.
   activeBand = span ? { lo: span.lo, hi: span.hi } : null;
+  // Only a position on screen says where the hand is. Looking at the
+  // whole neck it is nowhere in particular, so the last real answer
+  // stands until there is a new one.
+  if (span) anchorFret = span.lo;
   if (!span) activeStops = null;
   if (span) {
     const { x1, x2 } = bandEdges(span.lo, span.hi);
@@ -1587,26 +1759,32 @@ function render({ animate = true } = {}) {
 function syncCagedControls() {
   const type   = document.getElementById("scale").value;
   const chords = isChordMode();
+  // A progression is a series of grips, so it steps like chords do — but
+  // the grips are chosen by the progression, not by the player, so there
+  // is nothing here to edit or open up.
+  const walk   = isProgressionMode();
   const caged  = supportsCaged(type);
   const btn    = document.getElementById("cagedBtn");
   const nav    = document.getElementById("cagedNav");
 
   // A chord is only ever one grip, so voicing cycling is always on.
-  btn.disabled = chords;
-  btn.title = chords
-    ? "Chords are shown one grip at a time — step through them with the arrows"
-    : caged
-      ? "Show one CAGED shape at a time"
-      : "CAGED doesn't apply to this scale — showing playable hand positions";
-  btn.classList.toggle("active", chords || cagedOn);
-  btn.textContent = chords ? "Voicings" : caged ? "CAGED" : "Positions";
-  nav.style.display = (chords || cagedOn) ? "flex" : "none";
+  btn.disabled = chords || walk;
+  btn.title = walk
+    ? "The progression picks its own grips — step through them with the arrows"
+    : chords
+      ? "Chords are shown one grip at a time — step through them with the arrows"
+      : caged
+        ? "Show one CAGED shape at a time"
+        : "CAGED doesn't apply to this scale — showing playable hand positions";
+  btn.classList.toggle("active", chords || walk || cagedOn);
+  btn.textContent = walk ? "Chords" : chords ? "Voicings" : caged ? "CAGED" : "Positions";
+  nav.style.display = (chords || walk || cagedOn) ? "flex" : "none";
 
   // A scale or an arpeggio is something you travel through, so picking a
   // run is simply what the board does — there is nothing to switch on. A
   // chord is held rather than travelled through, so it is off there.
   const wasOn = pathOn;
-  pathOn = !chords;
+  pathOn = !chords && !walk;
   if (!pathOn && wasOn) clearPath();
   document.getElementById("pathNav").style.display = pathOn ? "flex" : "none";
   document.getElementById("board").classList.toggle("picking", pathOn);
@@ -1644,17 +1822,19 @@ function syncCagedControls() {
   // mode, so it can't be printed once and left there.
   const tone = document.getElementById("legendTone");
   const tip  = document.getElementById("legendTip");
-  if (tone) tone.textContent = chords ? "Chord tone" : "Scale tone";
+  if (tone) tone.textContent = (chords || walk) ? "Chord tone" : "Scale tone";
   if (tip) {
-    tip.textContent = chords
-      ? (ghostOn ? "Click a note to silence it, or a faint one to play it instead"
-                 : "Step through the grips, or drag the bar along the neck")
-      : "Click two notes to trace a run · drag any note to reshape it";
+    tip.textContent = walk
+      ? "Step through the progression · the grips are chosen to keep the hand still"
+      : chords
+        ? (ghostOn ? "Click a note to silence it, or a faint one to play it instead"
+                   : "Step through the grips, or drag the bar along the neck")
+        : "Click two notes to trace a run · drag any note to reshape it";
   }
 
   // Strumming is a chord idea too. Leaving chord mode leaves no grip to
   // play, so the button has nothing to refer to.
-  document.getElementById("strumField").style.display = chords ? "flex" : "none";
+  document.getElementById("strumField").style.display = (chords || walk) ? "flex" : "none";
   if (!chords) currentVoicing = null;
   syncStrumButton();
 }
@@ -1676,7 +1856,8 @@ function fillMaterialMenu(kind) {
   });
   sel.value = kind === "scale" ? MAJOR_SCALE : Object.values(groups)[0][0];
   document.getElementById("scaleLabel").textContent =
-    kind === "arpeggio" ? "Arpeggio" : kind === "chord" ? "Chord" : "Scale";
+    kind === "arpeggio" ? "Arpeggio" : kind === "chord" ? "Chord"
+    : kind === "progression" ? "Progression" : "Scale";
 }
 
 function initControls() {
@@ -1689,17 +1870,18 @@ function initControls() {
   // Switching between scales and arpeggios reloads the menu beneath it.
   document.getElementById("kind").addEventListener("change", e => {
     fillMaterialMenu(e.target.value);
-    posIndex = 0;
+    seekAnchor = true;
     clearPath();
     syncCagedControls();
     render();
   });
 
-  // Changing root or scale restarts at the lowest shape, and voids any
-  // run — its notes may not exist in the new scale.
+  // Changing the root or the quality holds the hand where it is and
+  // shows what the new material looks like there. Any run is still
+  // voided — its notes may not exist in the new scale.
   ["root", "scale"].forEach(id =>
     document.getElementById(id).addEventListener("change", () => {
-      posIndex = 0;
+      seekAnchor = true;
       clearPath();
       syncCagedControls();
       render();
@@ -1737,7 +1919,9 @@ function initControls() {
 
   document.getElementById("cagedBtn").addEventListener("click", () => {
     cagedOn = !cagedOn;
-    posIndex = 0;
+    // Turning positions on frames the part of the neck already in view,
+    // rather than throwing the hand back to the nut.
+    seekAnchor = true;
     clearPath();
     syncCagedControls();
     render();
@@ -1756,7 +1940,9 @@ function initControls() {
   });
 
   document.getElementById("strumBtn").addEventListener("click", () => {
-    if (playerKind === "chord") stopSound(); else strumChord();
+    if (playerKind === "chord" || playerKind === "progression") stopSound();
+    else if (isProgressionMode()) playProgressionThrough();
+    else strumChord();
   });
   const spread = document.getElementById("spread");
   const showSpread = () => {

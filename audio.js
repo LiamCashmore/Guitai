@@ -262,6 +262,47 @@ export const strumGap = t =>
   STRUM_SLOW * Math.pow(STRUM_FAST / STRUM_SLOW, Math.min(1, Math.max(0, t)));
 
 /**
+ * Play a series of chords, one after another.
+ *
+ * Everything is scheduled up front, as a run is — but a progression is
+ * long enough that the eye needs telling which chord has arrived, so the
+ * rAF loop reports the chord rather than the note.
+ *
+ * Nothing is damped between chords except by the strings themselves: a
+ * note on the fifth string is stopped when the next chord puts something
+ * else on the fifth string, and left ringing when it doesn't. That is
+ * what a guitar does, and it is why chords sharing a string bleed into
+ * each other the way they should.
+ *
+ * @param chords   [[{midi, string, key}]] each in strumming order
+ * @param gap      seconds between strings within one strum
+ * @param chordGap seconds from one chord to the next
+ */
+export function playProgression(chords, { gap = 0.02, chordGap = 1.7, onChord, onEnd } = {}) {
+  killScheduled();
+  if (!ctx || !chords.length) return { stop() {} };
+
+  const t0 = ctx.currentTime + 0.12;
+  chords.forEach((notes, c) => {
+    const at = t0 + c * chordGap;
+    notes.forEach((n, i) => scheduleNote(n, at + i * gap, 1 - 0.06 * i));
+  });
+
+  const finish = t0 + (chords.length - 1) * chordGap + Math.min(chordGap, 1.4);
+  let shown = -1;
+  const tick = () => {
+    const now = ctx.currentTime;
+    const c = Math.min(chords.length - 1, Math.floor((now - t0) / chordGap));
+    if (c > shown && c >= 0) { shown = c; onChord?.(c); }
+    if (now >= finish) { visualLoop = null; onEnd?.(); return; }
+    visualLoop = requestAnimationFrame(tick);
+  };
+  visualLoop = requestAnimationFrame(tick);
+
+  return { stop() { killScheduled(); onEnd?.(); } };
+}
+
+/**
  * Strum a chord, low string to high.
  *
  * Unlike a run, the notes are meant to pile up — nothing damps anything,
