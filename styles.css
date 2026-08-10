@@ -188,6 +188,29 @@ body::after {
   color: var(--muted);
 }
 
+/* The far end of the masthead: what you're playing, and what time of
+   day it is. Grouped so one auto margin pushes both across, instead of
+   two fighting over the same slack. */
+.masthead-tools {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+
+/* The instrument picker changes what the board IS, not what is drawn on
+   it, so it sits up here with the chrome rather than down among the
+   controls that choose material. */
+.select-compact { width: auto; }
+.select-compact select {
+  width: auto;
+  min-width: 108px;
+  padding: 9px 32px 9px 12px;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+
 /* ---- Sun / moon switch ------------------------------------- */
 /* Sits out at the far right, away from the controls that change the
    board — it changes the room, not the music. */
@@ -208,7 +231,7 @@ body::after {
 /* The theme toggle sits opposite the wordmark: the same sun, drawn as
    a half-disc, filling and emptying as the page turns over. */
 .theme-toggle {
-  margin-left: auto;
+  margin-left: 0;
   align-self: center;
   display: inline-flex;
   align-items: center;
@@ -624,6 +647,10 @@ input[type="range"]::-moz-range-thumb {
      sun and the moon are doing the explaining anyway. */
   .theme-toggle { gap: 0; padding: 9px 11px; }
   .theme-toggle .label { display: none; }
+
+  /* The instrument name is short enough to stand on its own here. */
+  .masthead-tools { gap: 7px; }
+  .select-compact select { min-width: 0; padding: 9px 28px 9px 10px; }
 
   .panel { gap: 10px; padding: 14px 12px 12px; }
   .field { flex: 1 1 calc(50% - 5px); }

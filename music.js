@@ -365,15 +365,93 @@ function spellScale(root, type) {
 // FRETBOARD MODEL
 // ============================================================
 
-export const numFrets = 17;
-export const tuning = ["E","A","D","G","B","E"];   // low -> high
-// MIDI pitch of each open string (E2 A2 D3 G3 B3 E4). Absolute pitch —
-// not just pitch class — is what lets us spot unisons: the same note
-// reachable on two different strings, e.g. open B and G-string fret 4.
-export const openMidi = [40, 45, 50, 55, 59, 64];
+// MIDI note -> pitch class in this file's convention (A = 0).
+function midiToPc(midi) { return (midi + 3) % 12; }
+
+// ------------------------------------------------------------
+// THE INSTRUMENTS
+//
+// An instrument is nothing but a list of open pitches. Everything else
+// in this file — the grid, the scale shapes, the positions, the runs —
+// is derived from that list and from the interval arithmetic above, so
+// adding an instrument is adding a row here and nothing more.
+//
+// `openMidi` is the whole definition; `tuning` is only its pitch classes
+// spelled out for the labels beside the nut, and is derived rather than
+// written twice. Absolute pitch — not just pitch class — is what lets us
+// spot unisons: the same note reachable on two different strings, e.g.
+// open B and G-string fret 4 on a guitar.
+//
+// `caged` is not a matter of taste. The five CAGED shapes are the five
+// movable major-chord forms of a SIX-string guitar tuned in fourths with
+// a major third between strings 3 and 2; a bass in straight fourths has
+// no such forms, so it takes the general position search instead, which
+// works from the intervals themselves and needs no template.
+//
+// `kinds` is what the instrument is asked to display. A bass starts with
+// scales and arpeggios: chords and progressions are grip searches built
+// around a six-string hand, and a four-string bass wants its own voicing
+// rules rather than the guitar's applied to fewer strings.
+// ------------------------------------------------------------
+
+export const INSTRUMENTS = {
+  guitar: {
+    id: "guitar",
+    name: "Guitar",
+    // E2 A2 D3 G3 B3 E4
+    openMidi: [40, 45, 50, 55, 59, 64],
+    numFrets: 17,
+    caged: true,
+    kinds: ["scale", "arpeggio", "chord", "progression"],
+  },
+  bass: {
+    id: "bass",
+    name: "Bass",
+    // E1 A1 D2 G2 — an octave below the guitar's bottom four, and all
+    // fourths, so the shape of a scale is the same on every string pair.
+    openMidi: [28, 33, 38, 43],
+    numFrets: 17,
+    caged: false,
+    kinds: ["scale", "arpeggio"],
+  },
+};
+
+export const DEFAULT_INSTRUMENT = "guitar";
+
+// The live fretboard. These are `let` on purpose: an ES module export is
+// a live binding, so reassigning them here updates every importer at
+// once, and nothing downstream has to be told an instrument changed.
+export let instrument   = INSTRUMENTS[DEFAULT_INSTRUMENT];
+export let numFrets     = instrument.numFrets;
+export let openMidi     = instrument.openMidi;
+export let tuning       = openMidi.map(m => FLAT_NAMES[midiToPc(m)]);   // low -> high
 // Chromatic grid: every pitch class at every fret of every string.
-export const chromaticGrid = tuning.map(o => getFretPcs(noteToPc(o), numFrets));
-export const numStrings = chromaticGrid.length;
+export let chromaticGrid = openMidi.map(m => getFretPcs(midiToPc(m), numFrets));
+export let numStrings    = chromaticGrid.length;
+
+/**
+ * Point the model at another instrument. Everything above is recomputed
+ * from its open pitches; nothing else in the file needs to know.
+ *
+ * @param {string} id  a key of INSTRUMENTS
+ * @returns {object} the instrument now in force
+ */
+export function setInstrument(id) {
+  const next = INSTRUMENTS[id];
+  if (!next) throw new Error(`unknown instrument: ${id}`);
+  instrument    = next;
+  numFrets      = next.numFrets;
+  openMidi      = next.openMidi;
+  tuning        = openMidi.map(m => FLAT_NAMES[midiToPc(m)]);
+  chromaticGrid = openMidi.map(m => getFretPcs(midiToPc(m), numFrets));
+  numStrings    = chromaticGrid.length;
+  return instrument;
+}
+
+/** Which displays this instrument offers. */
+export function supportsKind(kind) {
+  return instrument.kinds.includes(kind);
+}
 
 /**
  * Build the scale's own 2D grid, same shape as the chromatic grid
@@ -437,9 +515,10 @@ const MODE_TO_PARENT = {
   "Mixolydian": 7, "Aeolian (Minor)": 9, "Locrian": 11,
 };
 
-// CAGED is only meaningful for the natural modes.
+// CAGED is only meaningful for the natural modes, and only on an
+// instrument that has the shapes at all — see INSTRUMENTS above.
 export function supportsCaged(type) {
-  return type in MODE_TO_PARENT;
+  return instrument.caged && (type in MODE_TO_PARENT);
 }
 
 /**
@@ -548,9 +627,6 @@ export function getShapeGrid(root, type, box) {
 // pair of strings, and that hole is where notes used to disappear.
 const TIGHT_SPAN    = 4;   // one finger per fret — the tightest hand
 const POSITION_SPAN = 5;   // index anchors the low note, pinky stretches one
-
-// MIDI note -> pitch class in this file's convention (A = 0).
-function midiToPc(midi) { return (midi + 3) % 12; }
 
 /** Describe one box: note count, spread, and whether the run has holes. */
 function inspectBox(grid, pcs, lo, hi) {

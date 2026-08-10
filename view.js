@@ -13,6 +13,11 @@ import {
   rootOptions,
   groupsFor,
   MAJOR_SCALE,
+  INSTRUMENTS,
+  DEFAULT_INSTRUMENT,
+  setInstrument,
+  instrument,
+  supportsKind,
   tuning,
   numFrets,
   numStrings,
@@ -40,8 +45,16 @@ const doubleMarker = 12;
 const PAD_L = 70, PAD_T = 74, PAD_R = 30, PAD_B = 24;
 const HANDLE_Y = 14, HANDLE_H = 24;
 const FRET_W = 62, STR_GAP = 46, R = 15; // note-circle radius
-const boardW = PAD_L + numFrets * FRET_W + PAD_R;
-const boardH = PAD_T + (numStrings - 1) * STR_GAP + PAD_B;
+// Recomputed rather than fixed, because the number of strings — and so
+// the height of the board — is a property of the instrument, not of the
+// app. `numFrets` and `numStrings` are live bindings from music.js, so
+// these simply read whatever is currently mounted.
+let boardW = 0, boardH = 0;
+function sizeBoard() {
+  boardW = PAD_L + numFrets * FRET_W + PAD_R;
+  boardH = PAD_T + (numStrings - 1) * STR_GAP + PAD_B;
+}
+sizeBoard();
 
 const FADE_MS  = 240;   // must match the opacity transition in styles.css
 const SLIDE_MS = 360;   // must match the transform transition in styles.css
@@ -136,6 +149,15 @@ function applyTheme() {
       : "M1 8 A7 7 0 0 1 15 8 Z");
   }
 }
+
+// The displays, in the order they are offered. Which of them an
+// instrument actually gets is INSTRUMENTS[id].kinds over in music.js.
+const KIND_LABELS = [
+  ["scale",       "Scales"],
+  ["arpeggio",    "Arpeggios"],
+  ["chord",       "Chords"],
+  ["progression", "Progressions"],
+];
 
 // How many grips to offer for a chord in one stretch of neck. Three or
 // four is what a teacher would show; past that they are variations on
@@ -275,6 +297,7 @@ const cellId = c => `${c.string}:${c.fret}`;
 
 function drawBoard() {
   const svg = document.getElementById("board");
+  sizeBoard();
   svg.setAttribute("viewBox", `0 0 ${boardW} ${boardH}`);
   svg.setAttribute("width", boardW);
   svg.setAttribute("height", boardH);
@@ -329,7 +352,11 @@ function drawBoard() {
     const y = stringY(i);
     svg.appendChild(el("line", {
       x1: PAD_L, y1: y, x2: PAD_L + numFrets * FRET_W, y2: y,
-      stroke: "var(--string)", "stroke-width": 1 + (numStrings - 1 - i) * 0.4
+      // Thicker toward the low string. Four fat bass strings and six
+      // guitar strings want the same range of weights, so the taper is
+      // measured as a fraction of however many strings there are.
+      stroke: "var(--string)",
+      "stroke-width": 1 + (numStrings - 1 - i) / Math.max(1, numStrings - 1) * 2
     }));
     // Sat exactly where the open-note marker goes, so the tuning shows
     // through when that note is out of the scale and is hidden beneath
@@ -1840,6 +1867,84 @@ function syncCagedControls() {
 }
 
 /**
+ * Offer only the displays this instrument has. A bass carries scales and
+ * arpeggios; chords and progressions are grip searches written around a
+ * six-string hand, so they are not on the menu until the bass has
+ * voicing rules of its own.
+ */
+function fillKindMenu() {
+  const sel = document.getElementById("kind");
+  const wanted = sel.value;
+  sel.innerHTML = "";
+  KIND_LABELS.forEach(([value, label]) => {
+    if (supportsKind(value)) sel.appendChild(new Option(label, value));
+  });
+  // Hold the current display across the change where the new instrument
+  // has it — moving from a guitar scale to a bass scale should land on
+  // the scale — and fall back to the first one it does have where it
+  // doesn't.
+  sel.value = supportsKind(wanted) ? wanted : sel.options[0].value;
+  return sel.value;
+}
+
+/**
+ * Mount another instrument.
+ *
+ * music.js recomputes the whole fretboard from the new open pitches, so
+ * nothing here has to know what changed. What this does is throw away
+ * everything measured in strings and frets — every position index, every
+ * cached grip, every marker on screen — because none of it means the
+ * same thing on a board of a different size, and then rebuild.
+ */
+function switchInstrument(id) {
+  stopSound();
+  setInstrument(id);
+
+  // Anything holding a string or a fret is now nonsense.
+  clearPath();
+  visibleCells = null;
+  gripEdit = null;
+  ghostCells = new Set();
+  currentBase = null;
+  currentVoicing = null;
+  voicingCache = { key: null, list: null };
+  progressionCache = { key: null, chords: [] };
+  posIndex = 0;
+  winLo = 0;
+  anchorFret = 0;
+  cagedOn = false;
+  activeBand = null;
+  activeStops = null;
+
+  // The board is rebuilt from scratch, so every marker on it is gone —
+  // including the ones the diffing renderer thinks it still owns.
+  liveNotes.clear();
+  byPosition.clear();
+  linePoints = [];
+  lineShown = false;
+
+  drawBoard();
+  const kind = fillKindMenu();
+  fillMaterialMenu(kind);
+  syncMasthead();
+  syncCagedControls();
+  render({ animate: false });
+}
+
+/** The header names what is under the hands. */
+function syncMasthead() {
+  const h1 = document.querySelector(".masthead h1");
+  const sub = document.querySelector(".masthead p");
+  if (h1) h1.textContent = instrument.name;
+  if (sub) {
+    sub.textContent = instrument.kinds
+      .map(k => KIND_LABELS.find(([v]) => v === k)?.[1] ?? k)
+      .join(" · ");
+  }
+  document.title = `Guitai — ${instrument.name}`;
+}
+
+/**
  * Load the second dropdown with scales or with arpeggios. Both are just
  * note sets to everything downstream, so switching between them needs no
  * more than a different menu.
@@ -1861,11 +1966,19 @@ function fillMaterialMenu(kind) {
 }
 
 function initControls() {
+  const instSel = document.getElementById("instrument");
+  Object.values(INSTRUMENTS).forEach(i =>
+    instSel.appendChild(new Option(i.name, i.id)));
+  instSel.value = DEFAULT_INSTRUMENT;
+  instSel.addEventListener("change", e => switchInstrument(e.target.value));
+
   const rootSel = document.getElementById("root");
   rootOptions.forEach(n => rootSel.appendChild(new Option(n, n)));
   rootSel.value = "G";
 
+  fillKindMenu();
   fillMaterialMenu("scale");
+  syncMasthead();
 
   // Switching between scales and arpeggios reloads the menu beneath it.
   document.getElementById("kind").addEventListener("change", e => {
