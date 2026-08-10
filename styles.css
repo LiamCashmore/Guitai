@@ -55,6 +55,21 @@
   /* Ink dark enough to sit on any band — labels on filled buttons. */
   --on-band: #17160f;
 
+  /* ---- THE DIALS ------------------------------------------
+     Every colour of the run and its markers, gathered in one place so
+     they can be tried against each other. Each takes a band from above
+     or any hex you like. The stroke widths and dash patterns that go
+     with them are further down, under NOTES ON THE BOARD. */
+  --pos-bar: var(--band-2);        /* the sliding position bar         */
+  --pos-bar-ink: var(--on-band);   /* the fret range printed on it     */
+  --path-line: var(--band-4);      /* the line joining the run         */
+  --path-play: var(--band-2);      /* the playhead travelling along it */
+  --ring-end: var(--band-5);       /* the two notes you chose          */
+  --ring-path: var(--band-4);      /* notes the run passes through     */
+  --ring-pinned: var(--band-4);    /* slid into place, dotted ring     */
+  --ring-locked: var(--band-4);    /* held firmly, dashed ring         */
+  --ring-sounding: var(--band-4);  /* the note you're hearing, mid-run */
+
   --r: 3px;                  /* barely rounded: this era used a ruler */
 
   /* Motion (JS mirrors these durations — see FADE_MS / SLIDE_MS) */
@@ -493,18 +508,24 @@ input[type="range"]::-moz-range-thumb {
    define the run are the two that can't be mistaken for anything. */
 .note.is-start .note-circle,
 .note.is-target .note-circle {
-  stroke: var(--band-5);
+  stroke: var(--ring-end);
   stroke-width: 3.5;
 }
 
 /* Everything the run passes through is ringed in cream — the same ink
    as the line joining them. */
-.note.is-path .note-circle { stroke: var(--band-4); stroke-width: 2.5; }
+.note.is-path .note-circle { stroke: var(--ring-path); stroke-width: 2.5; }
+
+/* The line itself. Its colour lives here beside the rings; how visible
+   it is lives in view.js as LINE_OPACITY, because the line fades away
+   entirely when there is no run — that part is state, not styling. */
+#pathLayer polyline { stroke: var(--path-line); }
+#pathLayer .path-play { stroke: var(--path-play); }
 
 /* A pinned note — slid into place, but it gives way when an end moves.
    Thin dotted ring: held, lightly. */
 .note.is-pinned .note-circle {
-  stroke: var(--band-4);
+  stroke: var(--ring-pinned);
   stroke-width: 2;
   stroke-dasharray: 1 3;
 }
@@ -512,7 +533,7 @@ input[type="range"]::-moz-range-thumb {
 /* A locked note: bold dashed ring, so it reads as held firmly rather than
    merely passed through. Click it to let go. */
 .note.is-locked .note-circle {
-  stroke: var(--band-4);
+  stroke: var(--ring-locked);
   stroke-width: 3;
   stroke-dasharray: 4 3;
 }
@@ -536,7 +557,7 @@ input[type="range"]::-moz-range-thumb {
    the settle is slow, which is the shape of a plucked note. */
 .note.is-sounding .note-circle {
   transform: scale(1.34);
-  stroke: var(--band-4);
+  stroke: var(--ring-sounding);
   stroke-width: 3;
 }
 .note .note-circle {
@@ -563,6 +584,7 @@ input[type="range"]::-moz-range-thumb {
    run showing up somewhere new should fade in there, not skate across
    the neck from wherever the last one happened to end. */
 #pathLayer polyline { transition: opacity var(--fade); }
+#pathLayer .path-play { transition: none; }
 
 /* ---- Window handle ----------------------------------------- */
 /* A bar above the neck, dragged along it to pick a stretch. It slides by

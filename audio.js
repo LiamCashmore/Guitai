@@ -37,6 +37,14 @@ export async function unlock() {
 
 export const isAwake = () => !!ctx && ctx.state === "running";
 
+/**
+ * The audio clock, for anything that has to keep step with what is
+ * being heard. Reading it is the only way a drawn thing can stay in
+ * sync with sound: wall-clock time and the sample clock drift apart,
+ * and over a long run at a slow tempo that drift is plainly visible.
+ */
+export const clock = () => (ctx ? ctx.currentTime : 0);
+
 const midiToFreq = m => 440 * Math.pow(2, (m - 69) / 12);
 
 // ---- The string -------------------------------------------
@@ -199,7 +207,7 @@ function scheduleNote({ midi, string }, when, velocity = 1) {
  */
 function sound(notes, gap, { velocity, onStrike, onEnd, hold = 0 } = {}) {
   killScheduled();
-  if (!ctx || !notes.length) return { stop() {} };
+  if (!ctx || !notes.length) return { startsAt: 0, gap, stop() {} };
 
   const t0 = ctx.currentTime + 0.12;   // a moment to get the first one out
   notes.forEach((n, i) => scheduleNote(n, t0 + i * gap, velocity?.(i) ?? 1));
@@ -219,6 +227,11 @@ function sound(notes, gap, { velocity, onStrike, onEnd, hold = 0 } = {}) {
   visualLoop = requestAnimationFrame(tick);
 
   return {
+    // When the first note lands, and how far apart they are — everything
+    // needed to draw something that arrives with each note rather than
+    // reacting after it.
+    startsAt: t0,
+    gap,
     stop() { killScheduled(); onEnd?.(); },
   };
 }

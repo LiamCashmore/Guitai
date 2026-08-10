@@ -28,7 +28,7 @@ import {
   gripFingering,
 } from "./music.js";
 
-import { unlock, playSequence, playChord, strumGap } from "./audio.js";
+import { unlock, playSequence, playChord, strumGap, clock } from "./audio.js";
 
 // ---- Visual config ----------------------------------------
 const markerFrets = [3, 5, 7, 9, 15, 17];   // single inlay dots
@@ -256,20 +256,6 @@ function drawBoard() {
   svg.setAttribute("height", boardH);
   svg.innerHTML = "";
 
-  // The six bands, as an SVG paint so the hand-position bar can be the
-  // sunset itself rather than a flat swatch of it. Hard stops: each band
-  // ends exactly where the next begins, with nothing blended between.
-  const defs = el("defs", {});
-  const grad = el("linearGradient", { id: "sunsetBar", x1: "0", y1: "0", x2: "1", y2: "0" });
-  const BANDS = ["--band-1", "--band-2", "--band-3", "--stripe-4", "--band-5", "--band-6"];
-  BANDS.forEach((band, i) => {
-    const from = i / BANDS.length, to = (i + 1) / BANDS.length;
-    grad.appendChild(el("stop", { offset: from, "stop-color": `var(${band})` }));
-    grad.appendChild(el("stop", { offset: to,   "stop-color": `var(${band})` }));
-  });
-  defs.appendChild(grad);
-  svg.appendChild(defs);
-
   const topY = stringY(numStrings - 1);
   const botY = stringY(0);
 
@@ -339,10 +325,20 @@ function drawBoard() {
   // The run's connecting line sits under the note markers.
   pathLayer = el("g", { id: "pathLayer" });
   pathLine = el("polyline", {
-    points: "", fill: "none", stroke: "var(--band-4)", "stroke-width": 3,
+    points: "", fill: "none", "stroke-width": 3,
     "stroke-linecap": "round", "stroke-linejoin": "round", opacity: 0,
   });
   pathLayer.appendChild(pathLine);
+  // The playhead: the same line again, drawn over the top and revealed
+  // from the start as the run plays. Butt caps, so the growing end is a
+  // clean edge rather than a bead — and so nothing shows at all before
+  // the first note, where a round cap would leave a dot sitting on the
+  // board.
+  pathPlay = el("polyline", {
+    class: "path-play", points: "", fill: "none", "stroke-width": 4,
+    "stroke-linecap": "butt", "stroke-linejoin": "round", opacity: 0,
+  });
+  pathLayer.appendChild(pathPlay);
   svg.appendChild(pathLayer);
 
   noteLayer = el("g", { id: "noteLayer" });
@@ -355,12 +351,12 @@ function drawBoard() {
   handleGroup = el("g", { class: "win-handle" });
   handleBar = el("rect", {
     class: "bar", x: 0, y: HANDLE_Y, width: 0, height: HANDLE_H,
-    rx: 2, fill: "url(#sunsetBar)", opacity: 0.92,
+    rx: 2, fill: "var(--pos-bar)", opacity: 0.95,
   });
   handleGroup.appendChild(handleBar);
   handleLabel = el("text", {
     x: 12, y: HANDLE_Y + HANDLE_H / 2 + 4,
-    "font-size": 12, "font-weight": 700, fill: "var(--band-4)",
+    "font-size": 12, "font-weight": 700, fill: "var(--pos-bar-ink)",
     "letter-spacing": 0.5,
   });
   handleGroup.appendChild(handleLabel);
@@ -680,14 +676,19 @@ function onDragMove(evt) {
       if (nearest !== posIndex) {
         posIndex = nearest;
         clearPath();
-        render({ animate: false });
+        // Animated, like the arrows. A position is a discrete step, and
+        // crossing into a new one is the same event however it was asked
+        // for — so the notes slide and the line slides with them. The bar
+        // itself goes on easing under the pointer, which is what makes
+        // the drag feel like moving a hand rather than scrubbing a value.
+        render();
       }
     } else {
       const lo = Math.max(0, Math.min(numFrets - WINDOW_WIDTH + 1, fret));
       if (lo !== winLo) {
         winLo = lo;
         posIndex = 0;
-        render({ animate: false });
+        render();
       }
     }
     return;
@@ -829,9 +830,10 @@ function autoPathForPosition(grid) {
 }
 
 // ---- The run's line ---------------------------------------
-const LINE_OPACITY = 0.55;
+const LINE_OPACITY = 0.90;
 
 let pathLine    = null;   // the <polyline>
+let pathPlay    = null;   // the playhead drawn over it
 let linePoints  = [];     // where it is drawn at this instant
 let lineAnim    = null;   // in-flight animation handle
 let lineShown   = false;  // is it currently visible?
@@ -919,6 +921,7 @@ function renderPathLine({ animate = true } = {}) {
   // No run to show: fade out. The shape is left in place underneath so
   // nothing flickers through the fade.
   if (target.length === 0) {
+    stopPlayhead();
     pathLine.setAttribute("opacity", 0);
     lineShown = false;
     return;
@@ -959,6 +962,83 @@ function renderPathLine({ animate = true } = {}) {
   lineAnim = requestAnimationFrame(step);
 }
 
+// ---- The playhead -----------------------------------------
+/**
+ * A line that travels the run as it plays, arriving at each note exactly
+ * as that note sounds.
+ *
+ * The notes are evenly spaced in time, but the segments joining them are
+ * not evenly spaced on the neck — a run crossing four frets to the next
+ * note has further to travel than one moving to its neighbour, in the
+ * same eighth note. So the line cannot advance at a constant speed along
+ * its own length. It advances by note: the whole of segment k is covered
+ * in the whole of note k's duration, whatever that segment's length,
+ * which is what makes arrival and strike coincide instead of drifting
+ * apart over a long run.
+ *
+ * Position comes from the audio clock rather than a wall clock, for the
+ * same reason. The two run at slightly different rates, and half a beat
+ * of accumulated drift is obvious when you can see it against the note
+ * lighting up.
+ */
+let playAnim = null;
+
+/** Distance along the line to each note, and the total. */
+function noteDistances(points) {
+  const at = [0];
+  for (let i = 1; i < points.length; i++) {
+    at.push(at[i - 1] + Math.hypot(points[i].x - points[i - 1].x,
+                                   points[i].y - points[i - 1].y));
+  }
+  return { at, total: at[at.length - 1] };
+}
+
+function stopPlayhead() {
+  if (playAnim) { cancelAnimationFrame(playAnim); playAnim = null; }
+  if (pathPlay) pathPlay.setAttribute("opacity", 0);
+}
+
+/**
+ * @param points   where each note sits, in playing order
+ * @param startsAt when the first note lands, on the audio clock
+ * @param gap      seconds between notes
+ */
+function startPlayhead(points, startsAt, gap) {
+  stopPlayhead();
+  if (!pathPlay || points.length < 2 || !gap) return;
+
+  const { at, total } = noteDistances(points);
+  if (total === 0) return;
+
+  pathPlay.setAttribute("points", asPoints(points));
+  // Drawn as one dash the length of the whole line, pushed out of sight
+  // and then pulled back in — which is cheaper than rewriting the points
+  // sixty times a second, and keeps the corners mitred as it grows.
+  pathPlay.setAttribute("stroke-dasharray", `${total} ${total}`);
+  pathPlay.setAttribute("stroke-dashoffset", total);
+  pathPlay.setAttribute("opacity", 1);
+
+  const last = points.length - 1;
+  const step = () => {
+    // Where we are in notes, not in pixels: 2.5 means halfway from the
+    // third note to the fourth.
+    let pos = (clock() - startsAt) / gap;
+    pos = Math.min(last, Math.max(0, pos));
+    // Asked for less movement: the line steps from note to note instead
+    // of sliding between them, so it still says where the run is up to
+    // without anything gliding.
+    if (!wantsMotion()) pos = Math.floor(pos);
+
+    const i = Math.min(last - 1, Math.floor(pos));
+    const drawn = at[i] + (at[i + 1] - at[i]) * (pos - i);
+    pathPlay.setAttribute("stroke-dashoffset", total - drawn);
+
+    if (pos < last) playAnim = requestAnimationFrame(step);
+    else playAnim = null;
+  };
+  playAnim = requestAnimationFrame(step);
+}
+
 // ---- Hearing it -------------------------------------------
 
 /**
@@ -985,6 +1065,7 @@ function stopSound() {
   playerKind = null;
   playingSig = null;
   p?.stop();
+  stopPlayhead();
   showSounding(new Set());
   syncPlayButton();
   syncStrumButton();
@@ -1012,8 +1093,18 @@ async function playRun() {
   player = playSequence(notes, {
     bpm,
     onNote: n => showSounding(n ? new Set([n.key]) : new Set()),
-    onEnd: () => { player = null; playerKind = null; syncPlayButton(); },
+    onEnd: () => {
+      player = null; playerKind = null;
+      stopPlayhead();
+      syncPlayButton();
+    },
   });
+
+  // Drawn against the same schedule the notes were scheduled on, so the
+  // line and the sound are two readings of one clock rather than two
+  // timers that happen to have been started together.
+  startPlayhead(pathResult.cells.map(c => ({ x: fretX(c.fret), y: stringY(c.string) })),
+                player.startsAt, player.gap);
   playerKind = "run";
   syncPlayButton();
 }
