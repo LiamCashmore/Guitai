@@ -24,6 +24,7 @@ import {
   findPathThrough,
   pitchAt,
   chordVoicings,
+  rankVoicings,
   hasOpenVoicing,
   gripFingering,
 } from "./music.js";
@@ -134,6 +135,11 @@ function applyTheme() {
       : "M1 8 A7 7 0 0 1 15 8 Z");
   }
 }
+
+// How many grips to offer for a chord in one stretch of neck. Three or
+// four is what a teacher would show; past that they are variations on
+// each other and the arrows stop meaning anything.
+const GRIPS_SHOWN = 4;
 
 // ---- View state -------------------------------------------
 let cagedOn  = false;
@@ -1310,6 +1316,27 @@ function renderChord(root, type, voicing, ghostRange) {
 
   chordLayer.innerHTML = "";
 
+  // A barre, drawn as the bar it is: one finger lying across the fret,
+  // as wide as the markers it joins so it reads as the same object
+  // running under them rather than a line drawn between them.
+  //
+  // Taken from the fingering rather than from the frets, so it only
+  // appears where one finger really is covering several strings — two
+  // notes that happen to share a fret under two different fingers are
+  // not a barre, and drawing them joined would teach the wrong grip.
+  // It sits in this layer, under the note markers, which is also where
+  // the finger sits under the strings.
+  for (const barre of gripFingering(voicing.cells)?.barres ?? []) {
+    const x = fretX(barre.fret);
+    const from = stringY(barre.from), to = stringY(barre.to);
+    chordLayer.appendChild(el("rect", {
+      class: "barre",
+      x: x - R, y: Math.min(from, to) - R,
+      width: R * 2, height: Math.abs(to - from) + R * 2,
+      rx: R, ry: R,
+    }));
+  }
+
   // Strings the grip leaves out, crossed through beyond the nut.
   for (let s = 0; s < numStrings; s++) {
     if (voicing.strings.includes(s)) continue;
@@ -1347,18 +1374,16 @@ function render({ animate = true } = {}) {
     // neck show first. With OPEN on, an open string is exempt: it needs
     // no finger, so it can ring wherever the hand is.
     {
-      voicings = voicings
-        .filter(v => v.cells.every(c =>
-          (openOn && c.fret === 0) || (c.fret >= winLo && c.fret <= winHi)))
-        // Inside a stretch, lead with root position — the chord as it is
-        // usually reached for — and let the inversions follow. Across the
-        // whole neck the ordering stays by fret, which is what makes
-        // sliding coherent.
-        .sort((a, b) =>
-          (a.bass === "1" ? 0 : 1) - (b.bass === "1" ? 0 : 1) ||
-          a.lo - b.lo ||
-          b.cells.length - a.cells.length ||
-          a.fingers - b.fingers);
+      const inWindow = voicings.filter(v => v.cells.every(c =>
+        (openOn && c.fret === 0) || (c.fret >= winLo && c.fret <= winHi)));
+      // A chord has hundreds of correct fingerings in any given stretch
+      // of neck and a player wants three or four of them: the ones they
+      // would actually be taught. So the list is ranked by how the hand
+      // takes it — CAGED shapes first, then reach, barre, open strings,
+      // root in the bass, how much of the chord is sounding — and cut
+      // there. Cycling through every doubling of every inversion buries
+      // the grips that matter.
+      voicings = rankVoicings(inWindow, type, { limit: GRIPS_SHOWN });
     }
 
     let grid = buildScaleGrid(root, type);
@@ -1410,13 +1435,14 @@ function render({ animate = true } = {}) {
         posLabel.textContent = `no grip fits frets ${winLo}–${winHi}`;
         posLabel.classList.remove("unplayable");
       } else {
-        const set = `strings ${numStrings - voicing.strings[0]}–${numStrings - voicing.strings.at(-1)}`;
-        const frets = voicing.lo === voicing.hi
-          ? `fret ${voicing.lo}` : `frets ${voicing.lo}–${voicing.hi}`;
-        const hand = voicing.fingers !== undefined
-          ? ` · ${voicing.fingers} finger${voicing.fingers === 1 ? "" : "s"}` +
-            (voicing.barre ? " + barre" : "")
-          : voicing.edited ? " · more than 4 fingers" : "";
+        // The strings it uses, the frets it spans and the order of its
+        // intervals are all on the board already — printing them again
+        // just made the line long enough to stop being read. What is left
+        // is what the board can't say: which of the shapes this is, and
+        // what the hand has to do to hold it.
+        const shape = voicing.shape ? ` · ${voicing.shape} shape` : "";
+        const hand = voicing.barre ? " · barre"
+          : voicing.cells.some(c => c.fret === 0) ? " · open" : "";
         // An edit can ask for a hand nobody has. Still shown, still played
         // — but flagged, so the note to take back off is obvious.
         posLabel.classList.toggle("unplayable",
@@ -1427,8 +1453,8 @@ function render({ animate = true } = {}) {
         const inv = voicing.edited ? " · edited"
           : voicing.label && voicing.label !== "root position" ? ` · ${voicing.label}` : "";
         posLabel.textContent =
-          `${posIndex + 1}/${voicings.length} · ${set}${inv} · ${voicing.order} · ${frets}` +
-          hand + (voicing.stretch ? " · stretch" : "");
+          `${posIndex + 1}/${voicings.length}${shape}${inv}${hand}` +
+          (voicing.stretch ? " · stretch" : "");
       }
     }
     const prevB = document.getElementById("prevPos");
@@ -1518,15 +1544,10 @@ function render({ animate = true } = {}) {
     else if (!pathFrom) pathLabel.textContent = "Click a note to start a run";
     else if (!pathTo) pathLabel.textContent = "Now click the note to finish on";
     else if (!pathResult) pathLabel.textContent = "No playable run between those two";
-    else {
-      const frets = pathResult.cells.map(c => c.fret);
-      const locked = pathStops.filter(s => s.locked).length;
-      const pinned = pathStops.length - locked;
-      const held = (locked ? ` · ${locked} locked` : "") +
-                   (pinned ? ` · ${pinned} pinned` : "");
-      pathLabel.textContent =
-        `${pathResult.cells.length} notes · frets ${Math.min(...frets)}–${Math.max(...frets)}${held}`;
-    }
+    // Once the run is on the board there is nothing to add: how many
+    // notes it holds and how far it reaches are both plainly visible,
+    // and the held notes say so themselves with their rings.
+    else pathLabel.textContent = "";
   }
   syncPlayButton();
 
@@ -1536,11 +1557,15 @@ function render({ animate = true } = {}) {
     if (!box) {
       posLabel.textContent = cagedOn ? "no playable position found" : "";
     } else {
-      const shape = box.shape ? `${box.shape} shape · ` : "";
+      // The handle above the neck already prints the frets this position
+      // covers, so naming them again here says nothing new. The shape's
+      // name does — and where there isn't one, the frets are all there is
+      // to give.
       const lo = span ? span.lo : box.lo;
       const hi = span ? span.hi : box.hi;
-      posLabel.textContent =
-        `${posIndex + 1}/${boxCount} · ${shape}frets ${lo}–${hi}`;
+      posLabel.textContent = box.shape
+        ? `${posIndex + 1}/${boxCount} · ${box.shape} shape`
+        : `${posIndex + 1}/${boxCount} · frets ${lo}–${hi}`;
     }
   }
   const prev = document.getElementById("prevPos");

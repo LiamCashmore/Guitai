@@ -64,6 +64,7 @@
   --pos-bar-ink: var(--on-band);   /* the fret range printed on it     */
   --path-line: var(--band-4);      /* the line joining the run         */
   --path-play: var(--band-2);      /* the playhead travelling along it */
+  --barre: var(--band-2);          /* the finger lying across a fret    */
   --ring-end: var(--band-5);       /* the two notes you chose          */
   --ring-path: var(--band-4);      /* notes the run passes through     */
   --ring-pinned: var(--band-4);    /* slid into place, dotted ring     */
@@ -499,6 +500,13 @@ input[type="range"]::-moz-range-thumb {
 #board.editing .note { cursor: pointer; }
 #board.editing .note.is-muted:hover { opacity: 0.55 !important; }
 #board.editing { user-select: none; -webkit-user-select: none; }
+
+/* The finger laid across a fret. Held back enough that the frets and
+   strings it crosses still show through, since it spans most of the neck
+   on a full barre and at full strength it blots out the board underneath.
+   It is drawn in the layer below the markers, so the notes it joins sit
+   on top of it exactly as fingertips sit on top of a finger. */
+.barre { fill: var(--barre); opacity: 0.4; }
 
 /* Notes not taking part in the run recede but stay visible. */
 .note.is-muted { opacity: 0.22 !important; }

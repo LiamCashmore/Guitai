@@ -774,43 +774,275 @@ const INVERSION = {
  * @returns {{fingers, barre, barres} | null}
  */
 export function gripFingering(played) {
+  return layFingers(played);
+}
+
+// ============================================================
+// WHICH HAND PLAYS IT
+//
+// Knowing a grip *can* be fingered is not the same as knowing it is one
+// a player would reach for. Everything below is about the second
+// question: given several grips that all sound the chord, which is the
+// one to show first.
+//
+// The rule the hand actually follows is simple, and it is the same rule
+// every method book gives: the frets go in order under the fingers.
+// Whatever sits lowest is the index, and each fret further up takes the
+// next finger along. A barre happens when one finger has to cover
+// several strings at one fret — cheap and idiomatic when it is the index
+// lying across the low fret, more awkward when it is the ring finger
+// covering a fret with the index still holding something below.
+// ============================================================
+
+/**
+ * Lay the fingers on a grip.
+ *
+ * Works up from the lowest fret. At each fret the notes are gathered into
+ * runs one finger could cover, and then the question is only whether to
+ * use one finger or several — which is decided by how many are left. A
+ * player fingers a chord with separate fingers when they can, and barres
+ * when they must, so that is the order tried:
+ *
+ *   1. every note its own finger,
+ *   2. the index barred across the lowest fret,
+ *   3. a second finger barring higher up.
+ *
+ * @returns {{fingers, barre, barres, assign, index} | null} null when no
+ *          hand can hold it
+ */
+/** How many fingers a set of runs saves by being barred. */
+const saving = runList => runList.reduce((n, r) => n + r.length - 1, 0);
+
+function layFingers(played) {
   const stopped = played.filter(v => v.fret > 0);
-  if (stopped.length === 0) return { fingers: 0, barre: null, barres: [] };
+  if (stopped.length === 0) return { fingers: 0, barre: null, barres: [], assign: [], index: 0 };
 
   const frets = stopped.map(v => v.fret);
-  if (Math.max(...frets) - Math.min(...frets) + 1 > CHORD_SPAN) return null;
+  const low = Math.min(...frets), high = Math.max(...frets);
+  if (high - low + 1 > CHORD_SPAN) return null;
 
   const fretOn = new Map(played.map(p => [p.string, p.fret]));
-  const byFret = new Map();
-  for (const v of stopped) {
-    if (!byFret.has(v.fret)) byFret.set(v.fret, []);
-    byFret.get(v.fret).push(v.string);
-  }
 
-  let fingers = 0;
-  const barres = [];
-  for (const [fret, strings] of byFret) {
-    strings.sort((a, b) => a - b);
-    let runStart = 0;
+  // The runs at one fret: neighbouring stopped strings that one finger
+  // could cover together. A run breaks where a string in the middle sits
+  // at a lower fret, because the finger would have to press through it.
+  const runsAt = fret => {
+    const strings = stopped.filter(v => v.fret === fret).map(v => v.string).sort((a, b) => a - b);
+    const runs = [];
+    let start = 0;
     for (let i = 1; i <= strings.length; i++) {
-      // Can this string join the run under the same finger?
       let joins = i < strings.length;
       if (joins) {
-        for (let s = strings[i - 1] + 1; s < strings[i]; s++) {
-          const f = fretOn.get(s);
+        for (let sBetween = strings[i - 1] + 1; sBetween < strings[i]; sBetween++) {
+          const f = fretOn.get(sBetween);
           if (f !== undefined && f < fret) { joins = false; break; }
         }
       }
       if (joins) continue;
-      const from = strings[runStart], to = strings[i - 1];
-      fingers++;
-      if (to > from) barres.push({ fret, from, to });
-      runStart = i;
+      runs.push(strings.slice(start, i));
+      start = i;
+    }
+    return runs;
+  };
+
+  const fretList = [...new Set(frets)].sort((a, b) => a - b);
+  const runs = new Map(fretList.map(f => [f, runsAt(f)]));
+
+  // How many fingers a given set of barred frets costs.
+  const cost = barred => fretList.reduce((n, f) => n +
+    (barred.has(f) ? runs.get(f).length
+                   : runs.get(f).reduce((m, r) => m + r.length, 0)), 0);
+
+  // Try barring as little as possible: nothing, then the index across the
+  // lowest fret, then one more finger higher up — largest saving first,
+  // since that is the barre a player would actually add.
+  const barrable = fretList.filter(f => runs.get(f).some(r => r.length > 1));
+  const attempts = [new Set()];
+  if (barrable.includes(low)) attempts.push(new Set([low]));
+  const others = barrable.filter(f => f !== low)
+    .sort((a, b) => saving(runs.get(b)) - saving(runs.get(a)));
+  if (others.length) {
+    attempts.push(new Set(barrable.includes(low) ? [low, others[0]] : [others[0]]));
+  }
+  const chosen = attempts.find(set => cost(set) <= CHORD_FINGERS);
+  if (!chosen) return null;
+  if (chosen.size > CHORD_MAX_BARRES) return null;
+
+  // Now name the fingers. Ascending frets take ascending fingers — that
+  // is the whole of the rule, and it is why the note nearest the nut is
+  // the index and the one furthest up is the little finger.
+  const assign = [];
+  const barres = [];
+  let finger = 0;
+  for (const f of fretList) {
+    const units = chosen.has(f) ? runs.get(f) : runs.get(f).flatMap(r => r.map(x => [x]));
+    for (const unit of units) {
+      finger++;
+      for (const string of unit) assign.push({ string, fret: f, finger });
+      if (unit.length > 1) {
+        barres.push({ fret: f, from: unit[0], to: unit[unit.length - 1], finger });
+      }
     }
   }
-  if (fingers > CHORD_FINGERS) return null;
-  if (barres.length > CHORD_MAX_BARRES) return null;
-  return { fingers, barre: barres[0] ?? null, barres };
+
+  return {
+    fingers: finger,
+    barre: barres[0] ?? null,
+    barres,
+    assign,
+    // Which finger lies across the barre, if any. The index barring the
+    // lowest fret is the ordinary case; anything else is harder.
+    index: barres.length ? barres[0].finger : 0,
+  };
+}
+
+// ---- The CAGED grips --------------------------------------
+// A triad has five shapes on a guitar and every player learns them in
+// the same five places. They are worth naming and worth leading with,
+// because a player recognising the shape gets the fingering for free.
+//
+// Each is written as the frets it uses, relative to its own lowest, on a
+// named run of strings — which is exactly what a shape is: a pattern the
+// hand keeps while the neck moves underneath it.
+const CAGED_GRIPS = [
+  { name: "E", quality: "major", from: 0, shape: [0, 2, 2, 1, 0, 0] },
+  { name: "A", quality: "major", from: 1, shape: [0, 2, 2, 2, 0] },
+  { name: "D", quality: "major", from: 2, shape: [0, 2, 3, 2] },
+  { name: "C", quality: "major", from: 1, shape: [3, 2, 0, 1, 0] },
+  { name: "G", quality: "major", from: 0, shape: [3, 2, 0, 0, 0, 3] },
+  { name: "E", quality: "minor", from: 0, shape: [0, 2, 2, 0, 0, 0] },
+  { name: "A", quality: "minor", from: 1, shape: [0, 2, 2, 1, 0] },
+  { name: "D", quality: "minor", from: 2, shape: [0, 2, 3, 1] },
+];
+
+/** Which CAGED shape this grip is, if it is one. Triads only. */
+function cagedGrip(voicing, degrees) {
+  if (degrees.length !== 3) return null;
+  const quality = degrees.includes("b3") ? "minor" : degrees.includes("3") ? "major" : null;
+  if (!quality) return null;
+
+  const lo = Math.min(...voicing.cells.map(c => c.fret));
+  const pattern = voicing.cells.map(c => c.fret - lo);
+  for (const grip of CAGED_GRIPS) {
+    if (grip.quality !== quality) continue;
+    if (grip.from !== voicing.strings[0]) continue;
+    if (grip.shape.length !== pattern.length) continue;
+    if (grip.shape.every((f, i) => f === pattern[i])) return grip.name;
+  }
+  return null;
+}
+
+/**
+ * How hard this grip is to play, as a number — lower is easier.
+ *
+ * Not a measurement of anything; a ranking, tuned so the grip that comes
+ * out on top is the one a teacher would show first. The parts it weighs:
+ *
+ *   - a CAGED shape is what a player already knows, so it leads;
+ *   - the reach matters most, and past four frets it stops being a grip
+ *     and becomes a stretch;
+ *   - an index barre across the lowest fret is ordinary; a barre by some
+ *     other finger, with the index still holding a note below it, is not;
+ *   - an open string costs no finger at all, which is why the open
+ *     shapes are the first chords anyone learns;
+ *   - the root underneath makes a chord sound like itself;
+ *   - more strings sounding is fuller, and a run reaching the bass is
+ *     worth more than one sitting on the top three;
+ *   - a note repeated when it needn't be is a wasted string.
+ */
+function voicingEase(voicing, degrees) {
+  const { cells, notes, span, strings } = voicing;
+  let score = 0;
+
+  const shape = cagedGrip(voicing, degrees);
+  if (shape) score -= 3;
+
+  score += (span - 1) * 1.2;
+  if (span > CHORD_COMFORT) score += 5;              // a stretch, not a grip
+  score += (voicing.fingers ?? 4) * 0.9;
+
+  for (const barre of voicing.barres ?? []) {
+    // The index lying across the lowest fret is the barre everyone
+    // plays. Any other finger barring means the hand is holding a note
+    // below the barre as well, which is a different and harder thing.
+    score += barre.finger === 1 ? 0.8 : 3;
+  }
+
+  // An open string needs no finger, which is why the open shapes are the
+  // first chords anyone learns. Capped, though: three open strings do not
+  // make a grip three times better, and left uncapped this alone would
+  // float every thin two-string fragment to the top of the list.
+  const open = cells.filter(c => c.fret === 0).length;
+  score -= Math.min(open * 0.9, 2);
+
+  if (voicing.bass === "1") score -= 2;
+
+  // Fullness, weighted hard. A chord on the top three strings is a real
+  // thing a player uses, but it is not what you show someone asking how
+  // to play the chord — the six- and five-string grips are, and the top
+  // three are what you reach for once you already know them.
+  score += { 6: -3, 5: -2, 4: -0.5, 3: 2 }[strings.length] ?? 3;
+  score += strings[0] * 0.2;       // a run reaching the bass strings is fuller
+
+  // Every tone the chord names should be sounding if the hand allows it.
+  const sounded = new Set(notes.map(n => n.degree));
+  score += degrees.filter(d => !sounded.has(d)).length * 1.2;
+
+  // Doubling the root or the fifth is how guitars have always voiced
+  // chords. Doubling anything else spends a string on nothing.
+  const seen = new Map();
+  for (const n of notes) seen.set(n.degree, (seen.get(n.degree) ?? 0) + 1);
+  for (const [degree, count] of seen) {
+    if (count < 2) continue;
+    score += (degree === "1" || degree === "5") ? 0.15 * (count - 1) : 0.9 * (count - 1);
+  }
+
+  return { score, shape };
+}
+
+/**
+ * Whittle a list of grips down to the few worth showing.
+ *
+ * A chord has hundreds of correct fingerings and almost all of them are
+ * things nobody plays. Cycling through every one buries the three that
+ * matter, so the list is cut to the easiest few — and two grips differing
+ * by one doubled note are not two grips, so the near-duplicates go first.
+ */
+export function rankVoicings(list, type, { limit = 4 } = {}) {
+  const degrees = getScaleDegrees(type);
+  const scored = list.map(v => {
+    const { score, shape } = voicingEase(v, degrees);
+    return { ...v, ease: score, shape };
+  }).sort((a, b) => a.ease - b.ease);
+
+  // A grip that is another grip with strings taken away is not a second
+  // way of playing the chord — it is the same hand, sounding less. Open
+  // C is x32010; x320xx and xxx010 are that same shape with the player
+  // simply not striking everything, and offering all three as choices
+  // buries the ones that are genuinely different.
+  //
+  // Unless the bass changes. Adding the open sixth string to x32010
+  // gives 032010, which is the same fingering but a different chord —
+  // it sounds over an E — so that one stays.
+  const fingersOf = v => new Map(v.cells.map(c => [c.string, c.fret]));
+  const contains = (big, small) => {
+    for (const [string, fret] of small) if (big.get(string) !== fret) return false;
+    return true;
+  };
+
+  const kept = [];
+  const keptMaps = [];
+  for (const v of scored) {
+    const mine = fingersOf(v);
+    const shadowed = kept.some((k, i) =>
+      k.bass === v.bass &&
+      (contains(keptMaps[i], mine) || contains(mine, keptMaps[i])));
+    if (shadowed) continue;
+    kept.push(v);
+    keptMaps.push(mine);
+    if (kept.length >= limit) break;
+  }
+  return kept;
 }
 
 /**
