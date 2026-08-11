@@ -13,17 +13,24 @@
 // ============================================================
 
 import { getScaleDegrees } from "./theory.js";
-import { instrument, numFrets, numStrings, openMidi, buildScaleGrid } from "./fretboard.js";
+import { instrument, numFrets, numStrings, openMidi, droneStrings, buildScaleGrid } from "./fretboard.js";
 import { pitchAt } from "./paths.js";
 
-// Four frets is what the hand covers without complaint. Five is reachable
-// and sometimes the only way — a major 7 stacked in order on the lower
-// strings is 8,7,5,4, and a diminished triad's flat fifth pulls the shape
-// wide as well — but it is a stretch, so it is allowed and marked rather
-// than treated as equal.
-const CHORD_COMFORT = 4;
-const CHORD_SPAN    = 5;
-const CHORD_OPEN_SPAN = 3; // ...and keeps the grip around it tight
+// Four frets is what the hand covers without complaint on a guitar-scale
+// neck. Five is reachable and sometimes the only way — a major 7 stacked
+// in order on the lower strings is 8,7,5,4, and a diminished triad's flat
+// fifth pulls the shape wide as well — but it is a stretch, so it is
+// allowed and marked rather than treated as equal.
+//
+// These are read per instrument rather than fixed, because the same
+// finger-count of frets is not the same stretch on every neck: a
+// mandolin's scale is barely half a guitar's, so the frets themselves
+// sit closer together and the hand can comfortably cover more of them.
+// Falling back to the guitar's own numbers when an instrument doesn't
+// say otherwise.
+const chordSpan     = () => instrument.chords.maxSpan ?? 5;
+const chordComfort  = () => instrument.chords.comfortSpan ?? 4;
+const chordOpenSpan = () => instrument.chords.openSpan ?? 3; // ...and keeps the grip around it tight
 const CHORD_FINGERS = 4;
 
 const CHORD_MAX_BARRES = 2;   // the index can barre, and one other finger
@@ -177,7 +184,7 @@ function layFingers(played) {
 
   const frets = stopped.map(v => v.fret);
   const low = Math.min(...frets), high = Math.max(...frets);
-  if (high - low + 1 > CHORD_SPAN) return null;
+  if (high - low + 1 > chordSpan()) return null;
 
   const fretOn = new Map(played.map(p => [p.string, p.fret]));
 
@@ -275,6 +282,12 @@ const CAGED_GRIPS = [
 
 /** Which CAGED shape this grip is, if it is one. Triads only. */
 function cagedGrip(voicing, degrees) {
+  // The five shapes are named for a six-string guitar in fourths. A
+  // mandolin's fifths or a banjo's open G can, purely by coincidence,
+  // produce the same relative fret pattern on the same string numbers —
+  // but calling it an "E shape" there would teach a shape that doesn't
+  // exist on that instrument.
+  if (!instrument.caged) return null;
   if (degrees.length !== 3) return null;
   const quality = degrees.includes("b3") ? "minor" : degrees.includes("3") ? "major" : null;
   if (!quality) return null;
@@ -324,9 +337,46 @@ function voicingEase(voicing, degrees) {
   const shape = cagedGrip(voicing, degrees);
   if (shape) score -= 3;
 
-  score += (span - 1) * 1.2;
-  if (span > CHORD_COMFORT) score += 5;              // a stretch, not a grip
-  score += (voicing.fingers ?? 4) * 0.9;
+  // Cost of the stretch. Counted in frets by default — tuned for a
+  // guitar, where a fret really does cost about the same stretch
+  // wherever it falls. That stops being true on a short-scale neck: six
+  // frets at the twelfth position is a smaller reach than six frets at
+  // the first, because the frets themselves have narrowed. An
+  // instrument with real reach numbers (see handReach, built for bass)
+  // is charged in inches instead, so a wide span far up its neck isn't
+  // punished the way the same fret count would be near the nut.
+  const byInches = instrument.chords.reach.max !== Infinity;
+  if (byInches) {
+    const inches = handReach(cells);
+    score += inches * (instrument.chords.reachCostPerInch ?? 1.2);
+    if (inches > instrument.chords.reach.comfort) score += instrument.chords.stretchPenalty ?? 5;
+  } else {
+    score += (span - 1) * (instrument.chords.spanCostPerFret ?? 1.2);
+    if (span > chordComfort()) score += instrument.chords.stretchPenalty ?? 5;
+  }
+  // Charging by inches makes a narrow span far up the neck look free,
+  // since the frets themselves have narrowed — but the hand still has
+  // to travel there, and the neck usually gets in the way of it too.
+  // Guitar and banjo don't opt in: the guitar's own fret-count charges
+  // already discourage a high position by way of discouraging the wide
+  // span it usually takes to get there, and neither table needs a
+  // second, independent nudge for the same thing.
+  score += voicing.lo * (instrument.chords.positionCost ?? 0);
+  // Past some point the body of the instrument is in the way as much as
+  // the fingers are; a shape that's narrow in inches up there is still
+  // asking the hand to travel further than the ease of holding it once
+  // there would suggest.
+  score += Math.max(0, voicing.lo - (instrument.chords.highPositionFret ?? Infinity))
+    * (instrument.chords.highPositionCost ?? 0);
+  // What a finger costs, and what an open string saves, both assume a
+  // guitarist's habits by default: reach for the open shape, use as few
+  // fingers as the chord allows. A mandolin (and to a lesser extent a
+  // banjo) doesn't share that habit — the closed, movable shape fretted
+  // on all four strings is the standard chop-chord grip, not a fallback
+  // from the open one, so an instrument that plays that way can say its
+  // fingers cost less and its open strings save less.
+  const fingerCost = instrument.chords.fingerCost ?? 0.9;
+  score += (voicing.fingers ?? 4) * fingerCost;
 
   for (const barre of voicing.barres ?? []) {
     // The index lying across the lowest fret is the barre everyone
@@ -340,9 +390,26 @@ function voicingEase(voicing, degrees) {
   // make a grip three times better, and left uncapped this alone would
   // float every thin two-string fragment to the top of the list.
   const open = cells.filter(c => c.fret === 0).length;
-  score -= Math.min(open * 0.9, 2);
+  const openBonus = instrument.chords.openBonus ?? 0.9;
+  const openCap    = instrument.chords.openBonusCap ?? 2;
+  score -= Math.min(open * openBonus, openCap);
 
-  if (voicing.bass === "1") score -= 2;
+  // A fully closed grip — every string fretted, none left silent — is
+  // the mandolin chop chord specifically: a moveable, percussive shape
+  // chosen because it's the same shape in any key, not one that happens
+  // to fall on open strings. Nothing else here rewards that on its own
+  // terms — the fullness bonus below cares only about the string COUNT,
+  // and open strings already get their own bonus above regardless of
+  // whether they add up to a complete, transposable shape.
+  if (open === 0 && strings.length === numStrings && instrument.chords.closedGripBonus) {
+    score -= instrument.chords.closedGripBonus;
+  }
+
+  // Root position naming the chord for whoever's listening matters more
+  // on an instrument playing alone in the bass register than it does in
+  // a mandolin's chop chord, which is felt as much as heard and where a
+  // closed shape's inversion is chosen for the hand shape, not avoided.
+  if (voicing.bass === "1") score -= instrument.chords.rootBonus ?? 2;
 
   // How many strings should sound depends on what the chord is.
   //
@@ -353,10 +420,16 @@ function voicingEase(voicing, degrees) {
   // means the root or fifth sounding twice against notes a tone apart
   // from them. Four notes is what a guitarist actually plays there, and
   // it is why the shell voicings exist.
+  // Indexed by how many strings are left silent rather than by the raw
+  // count sounding, so "every string is going" means the same thing on
+  // a four-string mandolin as it does on a six-string guitar — both are
+  // 0 left out — instead of a mandolin's fullest possible grip reading
+  // as merely middling on a table sized for six.
   const dense = degrees.length >= 5;
+  const leftOut = numStrings - strings.length;
   score += dense
-    ? ({ 6: 2, 5: 0.5, 4: -1.5, 3: 0.5 }[strings.length] ?? 2)
-    : ({ 6: -3, 5: -2, 4: -0.5, 3: 2 }[strings.length] ?? 3);
+    ? ({ 0: 2, 1: 0.5, 2: -1.5, 3: 0.5 }[leftOut] ?? 2)
+    : ({ 0: -3, 1: -2, 2: -0.5, 3: 2 }[leftOut] ?? 3);
   score += strings[0] * 0.2;       // a run reaching the bass strings is fuller
 
   // Every tone the chord names should be sounding if the hand allows it.
@@ -388,12 +461,20 @@ function voicingEase(voicing, degrees) {
   if (EXTENSIONS.has(voicing.bass)) score += 3;
 
   // Doubling the root or the fifth is how guitars have always voiced
-  // chords. Doubling anything else spends a string on nothing.
+  // chords. Doubling anything else spends a string on nothing — on a
+  // guitar. A mandolin or banjo sits an octave or more above one, where
+  // a repeated third or seventh isn't a wasted string so much as the
+  // register talking: the chord is being voiced the way the instrument
+  // actually sits in an ensemble, thick strings and all. So the cost of
+  // that doubling is instrument's to set, not fixed the way root-and-
+  // fifth doubling is everywhere.
   const seen = new Map();
   for (const n of notes) seen.set(n.degree, (seen.get(n.degree) ?? 0) + 1);
   for (const [degree, count] of seen) {
     if (count < 2) continue;
-    score += (degree === "1" || degree === "5") ? 0.15 * (count - 1) : 0.9 * (count - 1);
+    score += (degree === "1" || degree === "5")
+      ? 0.15 * (count - 1)
+      : (instrument.chords.doubleCost ?? 0.9) * (count - 1);
   }
 
   return { score, shape };
@@ -464,6 +545,30 @@ function fullVoicings(root, type, { openAnywhere = false } = {}) {
   const out = [];
   const seen = new Set();
 
+  // Every string open, unfretted, is the whole point of an open tuning —
+  // strumming a banjo in open G with nothing held down IS a G major
+  // chord. The search below is built around a fretted anchor and can
+  // never produce that, so it's checked once here instead. Ordinary
+  // tunings don't spell a chord this way (EADGBE resolves to no triad
+  // at all), so this simply never fires for them.
+  if (grid.every(row => row[0])) {
+    const cells = grid.map((row, s) => ({ string: s, fret: 0 }));
+    const notes = cells.map(c => grid[c.string][0]);
+    if (satisfies(new Set(notes.map(n => n.degree)), wants)) {
+      const lowest = cells.reduce((low, c) =>
+        openMidi[c.string] < openMidi[low.string] ? c : low, cells[0]);
+      const bass = grid[lowest.string][0].degree;
+      out.push({
+        cells, notes, span: 0, stretch: false,
+        lo: 0, hi: 0, strings: cells.map(c => c.string),
+        fingers: 0, barre: null, barres: [],
+        order: notes.map(n => n.degree).join("-"),
+        bass,
+        label: notes.some(n => n.degree === "1") ? (INVERSION[bass] ?? "inversion") : "rootless",
+      });
+    }
+  }
+
   // Anchor on every fret, right to the end of the neck. Stopping a hand's
   // width early would silently lose every grip whose lowest note sits up
   // there — the reach simply runs out against the last fret instead.
@@ -473,7 +578,7 @@ function fullVoicings(root, type, { openAnywhere = false } = {}) {
     for (let s = 0; s < numStrings; s++) {
       const frets = [];
       if (grid[s][0]) frets.push(0);
-      for (let f = lo; f <= Math.min(lo + CHORD_SPAN - 1, numFrets); f++) {
+      for (let f = lo; f <= Math.min(lo + chordSpan() - 1, numFrets); f++) {
         if (grid[s][f]) frets.push(f);
       }
       options.push(frets);
@@ -527,8 +632,14 @@ function fullVoicings(root, type, { openAnywhere = false } = {}) {
             // wants. Asked for open strings outright, the only limit is
             // the hand's: an open string needs no finger, so the reach
             // is no harder than any other grip of the same span.
-            const openCap = openAnywhere ? CHORD_SPAN : CHORD_OPEN_SPAN;
-            if (cells.some(c => c.fret === 0) && span > openCap) return;
+            //
+            // A drone string never counts toward this. It isn't near the
+            // nut the way a normal open string is — it rings from its
+            // own separate string regardless of where the fretting hand
+            // is, so there's no reach to speak of and nothing to cap.
+            const openCap = openAnywhere ? chordSpan() : chordOpenSpan();
+            const reachesForOpen = cells.some(c => c.fret === 0 && !droneStrings.has(c.string));
+            if (reachesForOpen && span > openCap) return;
 
             const notes = cells.map(c => grid[c.string][c.fret]);
             // Every note it must sound has to be here; the rest are free
@@ -551,7 +662,7 @@ function fullVoicings(root, type, { openAnywhere = false } = {}) {
 
             out.push({
               cells, notes, span,
-              stretch: span > CHORD_COMFORT,
+              stretch: span > chordComfort(),
               lo, hi, strings,
               fingers: grip.fingers,
               barre: grip.barre,
@@ -687,7 +798,7 @@ export function chordVoicings(root, type, { stacked = true, openAnywhere = false
         const stopped = cells.map(c => c.fret).filter(f => f > 0);
         const span = stopped.length
           ? Math.max(...stopped) - Math.min(...stopped) + 1 : 0;
-        if (span > CHORD_SPAN) return;
+        if (span > chordSpan()) return;
         if (cells.some(c => c.fret === 0) &&
             stopped.length && Math.max(...stopped) > instrument.chords.openReach) return;
 
@@ -697,7 +808,7 @@ export function chordVoicings(root, type, { stacked = true, openAnywhere = false
         seen.add(key);
         out.push({
           cells, notes, span,
-          stretch: span > CHORD_COMFORT,
+          stretch: span > chordComfort(),
           lo: Math.min(...frets), hi: Math.max(...frets),
           strings,
           order: notes.map(n => n.degree).join("-"),
@@ -1005,7 +1116,7 @@ function bassSearch(root, type, core, openAnywhere) {
         const stopped = cells.map(c => c.fret).filter(f => f > 0);
         if (stopped.length === 0) return;                  // all open is not a grip
         const lo = Math.min(...stopped), hi = Math.max(...stopped);
-        if (hi - lo + 1 > CHORD_SPAN) return;
+        if (hi - lo + 1 > chordSpan()) return;
         const inches = handReach(cells);
         if (inches > reach.max) return;                    // no hand is that wide
 

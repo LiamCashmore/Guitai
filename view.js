@@ -22,6 +22,8 @@ import {
   numFrets,
   numStrings,
   chromaticGrid,
+  droneStrings,
+  displayOrder,
   buildScaleGrid,
   getPositions,
   getShapeGrid,
@@ -90,13 +92,52 @@ function el(tag, attrs) {
   return n;
 }
 
-// x-center of a note at a given fret (0 = open, sits left of the nut)
-function fretX(f) {
-  return f === 0 ? PAD_L - 34 : PAD_L + (f - 0.5) * FRET_W;
+// Where a string's own nut sits. Ordinary strings all start at the
+// board's nut; a drone string — a banjo's 5th — starts at its own,
+// partway up the neck, so its whole neighbourhood shifts with it.
+function stringNutX(s) {
+  const startFret = droneStrings.get(s);
+  return startFret ? PAD_L + (startFret - 1) * FRET_W : PAD_L;
 }
-// y-center of a string (index 0 = low E -> drawn at the BOTTOM, high E on top)
+// x-center of a note at a given fret (0 = open, sits left of the nut).
+// `s` is only needed for fret 0, to find which nut "left of" means.
+function fretX(f, s) {
+  return f === 0 ? stringNutX(s) - 34 : PAD_L + (f - 0.5) * FRET_W;
+}
+// Row of a string, bottom to top — usually the string index itself, but
+// an instrument can say otherwise (see fretboard.js's displayOrder).
+function stringRow(i) {
+  return displayOrder.indexOf(i);
+}
+// y-center of a row (row 0 drawn at the BOTTOM, top row highest).
+function rowY(row) {
+  return PAD_T + (numStrings - 1 - row) * STR_GAP;
+}
 function stringY(i) {
-  return PAD_T + (numStrings - 1 - i) * STR_GAP;
+  return rowY(stringRow(i));
+}
+// The board's vertical extremes — the top and bottom ROWS, not whichever
+// string happens to have the highest or lowest index. Only differ from
+// stringY(numStrings-1)/stringY(0) when an instrument reorders its rows.
+function boardTopY() { return PAD_T; }
+function boardBotY() { return PAD_T + (numStrings - 1) * STR_GAP; }
+
+/**
+ * How far down a fret's wire reaches.
+ *
+ * Ordinarily to the bottom row, same as every other fret. But a fret a
+ * drone string hasn't reached yet — a banjo's first four, below its own
+ * nut — has no business drawing a fretboard under a string that isn't
+ * there, so the wire stops short of that row instead.
+ */
+function fretBottomY(f) {
+  let cutRow = null;
+  for (const [s, startFret] of droneStrings) {
+    if (f >= startFret) continue;
+    const row = stringRow(s);
+    cutRow = cutRow === null ? row : Math.max(cutRow, row);
+  }
+  return cutRow === null ? boardBotY() + 18 : rowY(cutRow) - STR_GAP / 2;
 }
 
 /**
@@ -322,14 +363,31 @@ function drawBoard() {
   svg.setAttribute("height", boardH);
   svg.innerHTML = "";
 
-  const topY = stringY(numStrings - 1);
-  const botY = stringY(0);
+  const topY = boardTopY();
+  const botY = boardBotY();
 
-  // Wood
-  svg.appendChild(el("rect", {
-    x: PAD_L, y: topY - 18, width: numFrets * FRET_W, height: (botY - topY) + 36,
-    rx: 6, fill: "var(--wood)", stroke: "var(--wood-edge)", "stroke-width": 2
-  }));
+  // Wood. Ordinarily one slab — but a drone string's row has no neck
+  // under it before that string's own nut, so it's cut short there
+  // rather than drawn as if a fretboard existed for a string that
+  // hasn't started yet.
+  const droneEntries = [...droneStrings.entries()];
+  if (droneEntries.length === 0) {
+    svg.appendChild(el("rect", {
+      x: PAD_L, y: topY - 18, width: numFrets * FRET_W, height: (botY - topY) + 36,
+      rx: 6, fill: "var(--wood)", stroke: "var(--wood-edge)", "stroke-width": 2
+    }));
+  } else {
+    const cutY = fretBottomY(0);
+    const notchLeft = Math.min(...droneEntries.map(([s]) => stringNutX(s)));
+    svg.appendChild(el("rect", {
+      x: PAD_L, y: topY - 18, width: numFrets * FRET_W, height: cutY - (topY - 18),
+      rx: 6, fill: "var(--wood)", stroke: "var(--wood-edge)", "stroke-width": 2
+    }));
+    svg.appendChild(el("rect", {
+      x: notchLeft, y: cutY, width: PAD_L + numFrets * FRET_W - notchLeft, height: botY + 18 - cutY,
+      rx: 6, fill: "var(--wood)", stroke: "var(--wood-edge)", "stroke-width": 2
+    }));
+  }
 
   // Inlay markers
   const midY = (topY + botY) / 2;
@@ -354,7 +412,9 @@ function drawBoard() {
   for (let f = 0; f <= numFrets; f++) {
     const x = PAD_L + f * FRET_W;
     svg.appendChild(el("line", {
-      x1: x, y1: topY - 18, x2: x, y2: botY + 18,
+      // Stops short of a drone string's row until that string actually
+      // reaches this fret — see fretBottomY.
+      x1: x, y1: topY - 18, x2: x, y2: fretBottomY(f),
       stroke: f === 0 ? "var(--nut)" : "var(--wire)",
       "stroke-width": f === 0 ? 6 : 2
     }));
@@ -376,6 +436,7 @@ function drawBoard() {
   const perCourse = instrument.courses ?? 1;
   chromaticGrid.forEach((_, i) => {
     const y = stringY(i);
+    const nutX = stringNutX(i);
     const weight = 1 + (numStrings - 1 - i) / Math.max(1, numStrings - 1) * 2;
     // Paired strings are each thinner than a single would be, and sit
     // either side of where the course runs.
@@ -383,15 +444,30 @@ function drawBoard() {
     for (let k = 0; k < perCourse; k++) {
       const offset = perCourse === 1 ? 0 : (k - (perCourse - 1) / 2) * 3;
       svg.appendChild(el("line", {
-        x1: PAD_L, y1: y + offset, x2: PAD_L + numFrets * FRET_W, y2: y + offset,
+        // A drone string only exists from its own nut onward — drawing
+        // it from the board's nut would show a string that isn't there.
+        x1: nutX, y1: y + offset, x2: PAD_L + numFrets * FRET_W, y2: y + offset,
         stroke: "var(--string)", "stroke-width": each,
       }));
+    }
+    // A drone string's own peg, standing a little off the fretboard —
+    // where a banjo's actually is — with a curl of string leading up
+    // into the run proper, rather than the dead-straight nut edge every
+    // other string gets.
+    if (nutX !== PAD_L) {
+      const pegX = nutX - 34, pegY = y + 15;
+      svg.appendChild(el("path", {
+        d: `M ${pegX} ${pegY} Q ${nutX - 16} ${pegY} ${nutX} ${y}`,
+        fill: "none", stroke: "var(--string)", "stroke-width": each,
+        "stroke-linecap": "round",
+      }));
+      svg.appendChild(el("circle", { cx: pegX, cy: pegY, r: 4.5, fill: "var(--wood-edge)" }));
     }
     // Sat exactly where the open-note marker goes, so the tuning shows
     // through when that note is out of the scale and is hidden beneath
     // the marker when it is in — the notes draw on top of the board.
     const lbl = el("text", {
-      x: fretX(0), y: y + 4, "text-anchor": "middle",
+      x: fretX(0, i), y: y + 4, "text-anchor": "middle",
       "font-size": 13, fill: "var(--muted)", "font-weight": 600,
     });
     lbl.textContent = tuning[i];
@@ -518,7 +594,7 @@ function renderNotes(grid, mode) {
     let rank = 0;
     row.forEach((cell, f) => {
       if (!cell) return;
-      wanted.set(`${s}:${rank++}`, { cell, x: fretX(f), y: stringY(s), string: s, fret: f });
+      wanted.set(`${s}:${rank++}`, { cell, x: fretX(f, s), y: stringY(s), string: s, fret: f });
     });
   });
 
@@ -695,7 +771,7 @@ function cellNearest(x, y) {
   for (let s = 0; s < numStrings; s++) {
     for (let f = 0; f <= numFrets; f++) {
       if (!visibleCells || !visibleCells.has(`${s}:${f}`)) continue;
-      const dx = fretX(f) - x, dy = stringY(s) - y;
+      const dx = fretX(f, s) - x, dy = stringY(s) - y;
       const gap = dx * dx + dy * dy;
       if (gap < bestGap) { bestGap = gap; best = { string: s, fret: f }; }
     }
@@ -708,7 +784,7 @@ function cellNearestOnString(string, x) {
   let best = null, bestGap = Infinity;
   for (let f = 0; f <= numFrets; f++) {
     if (!visibleCells || !visibleCells.has(`${string}:${f}`)) continue;
-    const gap = Math.abs(fretX(f) - x);
+    const gap = Math.abs(fretX(f, string) - x);
     if (gap < bestGap) { bestGap = gap; best = { string, fret: f }; }
   }
   return best;
@@ -1000,7 +1076,7 @@ function renderPathLine({ animate = true } = {}) {
   if (lineAnim) { cancelAnimationFrame(lineAnim); lineAnim = null; }
 
   const target = (pathOn && pathResult)
-    ? pathResult.cells.map(c => ({ x: fretX(c.fret), y: stringY(c.string) }))
+    ? pathResult.cells.map(c => ({ x: fretX(c.fret, c.string), y: stringY(c.string) }))
     : [];
 
   // No run to show: fade out. The shape is left in place underneath so
@@ -1188,7 +1264,7 @@ async function playRun() {
   // Drawn against the same schedule the notes were scheduled on, so the
   // line and the sound are two readings of one clock rather than two
   // timers that happen to have been started together.
-  startPlayhead(pathResult.cells.map(c => ({ x: fretX(c.fret), y: stringY(c.string) })),
+  startPlayhead(pathResult.cells.map(c => ({ x: fretX(c.fret, c.string), y: stringY(c.string) })),
                 player.startsAt, player.gap);
   playerKind = "run";
   syncPlayButton();
@@ -1230,7 +1306,7 @@ async function strumChord() {
 
   const t = Number(document.getElementById("spread")?.value ?? 60) / 100;
   const notes = v.cells.slice()
-    .sort((a, b) => a.string - b.string)     // string 0 is the low E
+    .sort((a, b) => stringRow(a.string) - stringRow(b.string))   // bottom row first
     .map(c => ({ midi: pitchAt(c), string: c.string, key: cellId(c) }));
 
   // The strum builds up rather than moving along, so the lit notes
@@ -1267,7 +1343,7 @@ async function playProgressionThrough() {
 
   const t = Number(document.getElementById("spread")?.value ?? 60) / 100;
   const groups = chords.map(v => v.cells.slice()
-    .sort((a, b) => a.string - b.string)      // string 0 is the low E
+    .sort((a, b) => stringRow(a.string) - stringRow(b.string))   // bottom row first
     .map(c => ({ midi: pitchAt(c), string: c.string, key: cellId(c) })));
 
   player = playProgression(groups, {
@@ -1452,10 +1528,10 @@ function toggleGripNote(pos) {
     const onString = cells.findIndex(c => c.string === pos.string);
     if (onString >= 0) cells.splice(onString, 1);
     cells.push({ string: pos.string, fret: pos.fret });
-    // Back into string order, which only moves the note just added — the
+    // Back into strum order, which only moves the note just added — the
     // others were already in it, and the strum crosses the strings in
-    // this order.
-    cells.sort((a, b) => a.string - b.string);
+    // this order (bottom row to top, not string number — see stringRow).
+    cells.sort((a, b) => stringRow(a.string) - stringRow(b.string));
   }
 
   gripEdit = { sig: voicingSig(currentBase), cells };
@@ -1505,6 +1581,14 @@ function renderChord(root, type, voicing, ghostRange) {
         grid[s][f] = full[s][f];
         ghostCells.add(`${s}:${f}`);
       }
+      // A drone string's open note doesn't wait on the window reaching
+      // a nut — it isn't near the nut to begin with, and it's ringing
+      // regardless of where the hand is. So it's always on offer here,
+      // window or no.
+      if (droneStrings.has(s) && full[s][0]) {
+        grid[s][0] = full[s][0];
+        ghostCells.add(`${s}:0`);
+      }
     }
   }
   for (const { string, fret } of voicing.cells) {
@@ -1526,19 +1610,35 @@ function renderChord(root, type, voicing, ghostRange) {
   // the finger sits under the strings.
   for (const barre of gripFingering(voicing.cells)?.barres ?? []) {
     const x = fretX(barre.fret);
-    const from = stringY(barre.from), to = stringY(barre.to);
-    chordLayer.appendChild(el("rect", {
-      class: "barre",
-      x: x - R, y: Math.min(from, to) - R,
-      width: R * 2, height: Math.abs(to - from) + R * 2,
-      rx: R, ry: R,
-    }));
+    // Drawn by row, not by the two string numbers at its ends — a barre
+    // covers every string between them, and on an instrument whose rows
+    // aren't in string-number order (a banjo's drone sits apart from
+    // where its pitch would put it) those rows aren't necessarily
+    // contiguous. Split into one rectangle per contiguous run of rows,
+    // so a barre that's visually broken by the drone draws as the two
+    // separate pieces it actually is, rather than one bar sweeping over
+    // strings that aren't part of it.
+    const rows = [];
+    for (let s = barre.from; s <= barre.to; s++) rows.push(stringRow(s));
+    rows.sort((a, b) => a - b);
+    let segStart = 0;
+    for (let i = 1; i <= rows.length; i++) {
+      if (i < rows.length && rows[i] === rows[i - 1] + 1) continue;
+      const from = rowY(rows[segStart]), to = rowY(rows[i - 1]);
+      chordLayer.appendChild(el("rect", {
+        class: "barre",
+        x: x - R, y: Math.min(from, to) - R,
+        width: R * 2, height: Math.abs(to - from) + R * 2,
+        rx: R, ry: R,
+      }));
+      segStart = i;
+    }
   }
 
   // Strings the grip leaves out, crossed through beyond the nut.
   for (let s = 0; s < numStrings; s++) {
     if (voicing.strings.includes(s)) continue;
-    const y = stringY(s), x = PAD_L - 34, r = 5;
+    const y = stringY(s), x = fretX(0, s), r = 5;
     [1, -1].forEach(dir => {
       chordLayer.appendChild(el("line", {
         x1: x - r, y1: y - r * dir, x2: x + r, y2: y + r * dir,
@@ -1605,7 +1705,7 @@ function render({ animate = true } = {}) {
     anchorFret = winLo;
     if (activeBand) {
       const { x1, x2 } = bandEdges(activeBand.lo, activeBand.hi);
-      const topY = stringY(numStrings - 1), botY = stringY(0);
+      const topY = boardTopY(), botY = boardBotY();
       highlight.setAttribute("x", x1);
       highlight.setAttribute("width", x2 - x1);
       highlight.setAttribute("y", topY - 24);
@@ -1706,7 +1806,7 @@ function render({ animate = true } = {}) {
     anchorFret = winLo;
     {
       const { x1, x2 } = bandEdges(activeBand.lo, activeBand.hi);
-      const topY = stringY(numStrings - 1), botY = stringY(0);
+      const topY = boardTopY(), botY = boardBotY();
       highlight.setAttribute("x", x1);
       highlight.setAttribute("width", x2 - x1);
       highlight.setAttribute("y", topY - 24);

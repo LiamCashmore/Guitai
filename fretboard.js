@@ -92,16 +92,105 @@ export const INSTRUMENTS = {
     // the drawing knows about it.
     courses: 2,
     caged: false,
-    kinds: ["scale", "arpeggio"],
+    kinds: ["scale", "arpeggio", "chord"],
     chords: {
-      // Not offered yet, so nothing reads this but the fields the shared
-      // code touches. Guitar grip rules would not transfer anyway: they
-      // assume fourths, and a mandolin's fifths put a chord's notes in
-      // completely different places.
+      // Guitar grip rules don't transfer as-is — a mandolin's fifths put
+      // a chord's notes in completely different places than a guitar's
+      // fourths — but the shared full-voicing search only cares about
+      // open pitches and fret positions, and works from those either way.
       strategy: "guitar",
       scaleLength: 13.875,
+      // Real inches rather than the guitar's uncapped, fret-counted
+      // reach — a mandolin's neck is short enough that a wide fret span
+      // can be a small stretch or a real one depending on where it
+      // falls, and only physical distance tells the two apart. A closed
+      // four-finger chop chord up around the seventh position spans
+      // about two inches; that's the everyday grip, not a stretch, so
+      // comfort is set to cover it.
+      reach: { comfort: 2.5, max: 3.5 },
+      reachCostPerInch: 1.2,
+      openReach: 5,
+      // A scale a third the length of a guitar's puts three or four
+      // times the frets under the same span of fingers, so the same
+      // finger-count reach the guitar's numbers assume is a much wider
+      // stretch of neck here — common mandolin "chop" chords routinely
+      // span five or six frets without being any harder to hold. Read
+      // by the pass/fail cap (chordSpan/chordComfort); the ease cost
+      // itself is charged in inches, above.
+      maxSpan: 7,
+      comfortSpan: 5,
+      openSpan: 5,
+      stretchPenalty: 2.5,
+      // A guitarist reaches for the open chord and counts fewer fingers
+      // as easier; a mandolin player's default is the closed, movable
+      // chop-chord shape fretted on all four strings, so neither habit
+      // should weigh as heavily here as it does on a guitar.
+      fingerCost: 0.35,
+      openBonus: 0.15,
+      openBonusCap: 0.4,
+      // A closed movable shape is chosen for its hand pattern more than
+      // for where the root falls, so an inversion isn't the fallback
+      // position it is on a lower, single-note-at-a-time instrument.
+      rootBonus: 0.6,
+      // The chop chord itself: every string fretted, none open. Worth
+      // naming directly rather than hoping the other terms add up to
+      // favouring it, since none of them are actually about this.
+      closedGripBonus: 3,
+      // Charged in inches, a tight shape at the twelfth fret can look
+      // cheaper than the same shape at the fifth — correctly, for the
+      // hand's span, but the arm still has to get up there. A small tax
+      // per fret of position keeps that preference from running away
+      // with high grips that are narrow but simply far from the nut.
+      positionCost: 0.08,
+      // Frets 11 and up are where a mandolin's body meets the neck —
+      // reachable, but the hand is working around the instrument as
+      // much as fretting a chord, so it costs more per fret past there.
+      highPositionFret: 10,
+      highPositionCost: 0.6,
+      // A mandolin sits an octave above a guitar, where a doubled third
+      // or seventh colours the chord rather than wasting a string —
+      // close to how a mandolin orchestra actually voices one.
+      doubleCost: 0.25,
+    },
+  },
+
+  banjo: {
+    id: "banjo",
+    name: "Banjo",
+    // Open G. Indices 0-3 are the 4th through 1st strings, D3 G3 B3 D4,
+    // low to high like every other tuning here — the 5th string (g4)
+    // is last because the model orders by pitch and it's the highest
+    // string on the instrument.
+    openMidi: [50, 55, 59, 62, 67],
+    numFrets: 17,
+    // The 5th string has its own short nut around the 5th fret and is
+    // never fretted below it — on a real neck because the string simply
+    // isn't there yet. It sounds open, or fretted from its own nut on
+    // up; `startFret` is where both the model's fret range and the
+    // view's drawing of its nut begin.
+    droneStrings: [{ string: 4, startFret: 5 }],
+    // Pitch order puts the 5th string above the 1st, which is correct
+    // for the model — everything here reasons in ascending pitch — but
+    // physically the 5th string sits apart from the other four, off the
+    // low side of the neck. This is purely a drawing order for the view:
+    // the 4th-to-1st strings keep their usual low-to-high stack, with
+    // the 5th string's row placed below all of them, matching the real
+    // instrument rather than its pitch.
+    displayOrder: [4, 0, 1, 2, 3],
+    // Open G shares nothing with the guitar's CAGED shapes — different
+    // tuning, different chord shapes entirely.
+    caged: false,
+    kinds: ["scale", "arpeggio", "chord"],
+    chords: {
+      strategy: "guitar",
+      scaleLength: 26,
       reach: { comfort: Infinity, max: Infinity },
       openReach: 5,
+      // A banjo sits above a guitar in register too, if not as far above
+      // as a mandolin — and its usual grips lean on all four fingers
+      // across the four fretted strings, where a repeated third or fifth
+      // is normal rather than a wasted finger.
+      doubleCost: 0.25,
     },
   },
 };
@@ -116,8 +205,41 @@ export let numFrets     = instrument.numFrets;
 export let openMidi     = instrument.openMidi;
 export let tuning       = openMidi.map(m => FLAT_NAMES[midiToPc(m)]);   // low -> high
 // Chromatic grid: every pitch class at every fret of every string.
-export let chromaticGrid = openMidi.map(m => getFretPcs(midiToPc(m), numFrets));
+export let chromaticGrid = capDroneStrings(
+  openMidi.map(m => getFretPcs(midiToPc(m), numFrets)), instrument);
 export let numStrings    = chromaticGrid.length;
+// Strings with no fret but the open one — a banjo's 5th string, so far —
+// mapped to the fret the view should draw their nut and open note at.
+// Read by paths.js, which walks raw fret arithmetic rather than this
+// grid and so needs telling directly which strings that arithmetic
+// isn't allowed to fret; and by view.js, for where to draw them.
+export let droneStrings  = new Map((instrument.droneStrings ?? []).map(d => [d.string, d.startFret]));
+// Which row each string draws on, bottom to top — identity unless an
+// instrument says otherwise (see the banjo entry above for why one
+// would). Purely a view concern; nothing in the model reads it.
+export let displayOrder  = instrument.displayOrder ?? identityOrder(numStrings);
+
+function identityOrder(n) {
+  return Array.from({ length: n }, (_, i) => i);
+}
+
+/**
+ * Blank out the frets a drone string doesn't physically have.
+ *
+ * A drone string is genuinely short, not fretless: it sounds open, and
+ * it can be fretted from its own nut on up, but nothing below that nut
+ * exists to press. Blanking exactly that range means every search built
+ * on chromaticGrid — scale positions, chord voicings — respects it for
+ * free, the same way it already respects a fret simply not being in the
+ * scale.
+ */
+function capDroneStrings(grid, forInstrument) {
+  for (const d of forInstrument.droneStrings ?? []) {
+    grid[d.string] = grid[d.string].map((pc, f) =>
+      (f === 0 || f >= d.startFret) ? pc : null);
+  }
+  return grid;
+}
 
 /**
  * The interval between each pair of neighbouring strings, in semitones.
@@ -171,8 +293,10 @@ export function setInstrument(id) {
   numFrets      = next.numFrets;
   openMidi      = next.openMidi;
   tuning        = openMidi.map(m => FLAT_NAMES[midiToPc(m)]);
-  chromaticGrid = openMidi.map(m => getFretPcs(midiToPc(m), numFrets));
+  chromaticGrid = capDroneStrings(openMidi.map(m => getFretPcs(midiToPc(m), numFrets)), next);
   numStrings    = chromaticGrid.length;
+  droneStrings  = new Map((next.droneStrings ?? []).map(d => [d.string, d.startFret]));
+  displayOrder  = next.displayOrder ?? identityOrder(numStrings);
   return instrument;
 }
 

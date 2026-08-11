@@ -13,7 +13,7 @@
 // ============================================================
 
 import { noteToPc, getScalePcs, midiToPc } from "./theory.js";
-import { numFrets, numStrings, openMidi, buildScaleGrid, positionSpan, tightSpan } from "./fretboard.js";
+import { numFrets, numStrings, openMidi, droneStrings, buildScaleGrid, positionSpan, tightSpan } from "./fretboard.js";
 import { generalPositions, supportsCaged, cagedPositions, inspectBox, boxIsPlayable } from "./positions.js";
 
 // Four notes on a string is the comfortable maximum, but it is a
@@ -151,6 +151,10 @@ function searchPath(root, type, from, to, only, window) {
   const fretFor = (pitch, s) => {
     const f = pitch - openMidi[s];
     if (f < 0 || f > numFrets) return null;
+    // A drone string sounds open, or fretted from its own nut on up —
+    // never in between, since the string simply doesn't reach there.
+    const droneStart = droneStrings.get(s);
+    if (droneStart && f > 0 && f < droneStart) return null;
     if (only && !only.has(`${s}:${f}`)) return null;   // outside the shape
     if (window) {                                      // outside the hand
       if (f === 0 ? window.lo !== 0 : (f < window.lo || f > window.hi)) return null;

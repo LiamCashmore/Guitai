@@ -9,7 +9,7 @@
 
 import { noteToPc, getScalePcs, midiToPc } from "./theory.js";
 import {
-  instrument, chromaticGrid, numFrets, numStrings,
+  instrument, chromaticGrid, numFrets, numStrings, droneStrings,
   buildScaleGrid, tightSpan, positionSpan,
 } from "./fretboard.js";
 
@@ -197,7 +197,10 @@ export function inspectBox(grid, pcs, lo, hi) {
     lo: Math.min(...frets), hi: Math.max(...frets),
     notes: cells.length, gaps, perString, cells,
     complete: covered.size === pcs.size,
-    minPerString: Math.min(...perString),
+    // A drone string only ever sounds open, so it has no vote here — a
+    // box off the nut leaving it silent is normal, not a hole in the
+    // fingering the way a genuinely empty fretted string would be.
+    minPerString: Math.min(...perString.filter((_, s) => !droneStrings.has(s))),
     // Identity of the position — the exact notes under the hand.
     key: cells.map(c => `${c.string}:${c.fret}`).sort().join("|"),
   };

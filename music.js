@@ -22,12 +22,20 @@ export * from "./voicings.js";
 export * from "./paths.js";
 
 import { scaleGroups, chordGroups, arpeggioGroups } from "./theory.js";
+import { instrument } from "./fretboard.js";
 import { progressionGroups } from "./progressions.js";
 
-/** The menu for a given kind of material. */
+/**
+ * The menu for a given kind of material.
+ *
+ * Chords fall back to the full shared list, but an instrument can offer
+ * a narrower one instead — a banjo's open-G tuning makes the search
+ * happy to solve for a 13th chord, but nobody plays one that way, so
+ * only the triads a beginner actually reaches for are offered.
+ */
 export function groupsFor(kind) {
   if (kind === "arpeggio")    return arpeggioGroups;
-  if (kind === "chord")       return chordGroups;
+  if (kind === "chord")       return instrument.chords.groups ?? chordGroups;
   if (kind === "progression") return progressionGroups;
   return scaleGroups;
 }
