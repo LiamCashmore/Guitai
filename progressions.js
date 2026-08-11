@@ -43,7 +43,7 @@ const CHORD_SYMBOL = {
   "Dominant 7": "7", "Minor 7b5": "m7b5", "Diminished 7": "°7",
 };
 
-export function chordSymbol(root, type) {
+function chordSymbol(root, type) {
   return root + (CHORD_SYMBOL[type] ?? ` ${type}`);
 }
 

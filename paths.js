@@ -13,7 +13,7 @@
 // ============================================================
 
 import { noteToPc, getScalePcs, midiToPc } from "./theory.js";
-import { numFrets, numStrings, openMidi, droneStrings, buildScaleGrid, positionSpan, tightSpan } from "./fretboard.js";
+import { numFrets, numStrings, openMidi, droneStrings, midiAt, buildScaleGrid, positionSpan, tightSpan } from "./fretboard.js";
 import { generalPositions, supportsCaged, cagedPositions, inspectBox, boxIsPlayable } from "./positions.js";
 
 // Four notes on a string is the comfortable maximum, but it is a
@@ -69,7 +69,7 @@ const PATH_OPEN_PENALTY   = 0.5;
  *        use — pass a position's notes to keep the run inside that shape
  * @returns {{cells:Array<{string,fret,midi}>, cost:number} | null}
  */
-export function findPath(root, type, from, to, only = null) {
+function findPath(root, type, from, to, only = null) {
   // Prefer the most vertical run there is. Before searching the whole
   // neck, try to keep the entire run inside a single hand position —
   // narrowest first, and lowest among equals. Only when no such window
@@ -116,17 +116,17 @@ export function findPathThrough(root, type, points, only = null) {
   return cells.length ? { cells, cost } : null;
 }
 
-/** Absolute pitch of a fretboard cell. */
+/** Absolute pitch of a fretboard cell. See midiAt for the drone case. */
 export function pitchAt(cell) {
-  return openMidi[cell.string] + cell.fret;
+  return midiAt(cell.string, cell.fret);
 }
 
 // The search proper. `window`, when given, confines every note to one
 // stationary hand position.
 function searchPath(root, type, from, to, only, window) {
   const pcs = new Set(getScalePcs(noteToPc(root), type));
-  const startPitch = openMidi[from.string] + from.fret;
-  const endPitch   = openMidi[to.string]   + to.fret;
+  const startPitch = pitchAt(from);
+  const endPitch   = pitchAt(to);
   if (!pcs.has(midiToPc(startPitch)) || !pcs.has(midiToPc(endPitch))) return null;
 
   // Every scale tone between the endpoints, in playing order.
@@ -143,18 +143,22 @@ function searchPath(root, type, from, to, only, window) {
   if (sequence.length < 2) {
     if (from.string === to.string && from.fret === to.fret) return null;
     return {
-      cells: [from, to].map(c => ({ ...c, midi: openMidi[c.string] + c.fret })),
+      cells: [from, to].map(c => ({ ...c, midi: pitchAt(c) })),
       cost: 0,
     };
   }
 
   const fretFor = (pitch, s) => {
-    const f = pitch - openMidi[s];
+    // Inverting midiAt. A drone string's frets are numbered from the
+    // board's nut but counted from its own, so the fret sounding a given
+    // pitch sits that distance further up — and its open note is fret 0
+    // however far up the neck the string itself starts.
+    const nut = droneStrings.get(s) ?? 0;
+    const f = pitch === openMidi[s] ? 0 : pitch - openMidi[s] + nut;
     if (f < 0 || f > numFrets) return null;
     // A drone string sounds open, or fretted from its own nut on up —
     // never in between, since the string simply doesn't reach there.
-    const droneStart = droneStrings.get(s);
-    if (droneStart && f > 0 && f < droneStart) return null;
+    if (f > 0 && f <= nut) return null;
     if (only && !only.has(`${s}:${f}`)) return null;   // outside the shape
     if (window) {                                      // outside the hand
       if (f === 0 ? window.lo !== 0 : (f < window.lo || f > window.hi)) return null;
@@ -258,7 +262,7 @@ function searchPath(root, type, from, to, only, window) {
 
   const cells = [];
   for (let s = best; s; s = s.prev) {
-    cells.push({ string: s.string, fret: s.fret, midi: openMidi[s.string] + s.fret });
+    cells.push({ string: s.string, fret: s.fret, midi: midiAt(s.string, s.fret) });
   }
   cells.reverse();
   return { cells, cost: best.cost };

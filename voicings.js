@@ -13,7 +13,7 @@
 // ============================================================
 
 import { getScaleDegrees } from "./theory.js";
-import { instrument, numFrets, numStrings, openMidi, droneStrings, buildScaleGrid } from "./fretboard.js";
+import { instrument, numFrets, numStrings, droneStrings, midiAt, buildScaleGrid } from "./fretboard.js";
 import { pitchAt } from "./paths.js";
 
 // Four frets is what the hand covers without complaint on a guitar-scale
@@ -94,9 +94,31 @@ export function chordRequirements(degrees, type) {
   return { required, anyOf };
 }
 
-/** The notes a chord cannot do without, ignoring either/or choices. */
-export function essentialDegrees(degrees, type) {
-  return chordRequirements(degrees, type).required;
+/**
+ * The same chord asked for less, for when the neck cannot hold it whole.
+ *
+ * A hand's width of neck sometimes has no room for every tone a chord
+ * names, and not because the search is too strict — because the notes
+ * are not there. G13 between frets 4 and 8 of a banjo has its seventh
+ * and its thirteenth both on the second string and nowhere else in that
+ * stretch, so no hand sounds the two together at any fingering.
+ *
+ * Refusing to answer leaves the board blank, which tells the player
+ * nothing. What a player does there is play the shell — root, third,
+ * seventh — and let the extension go, so that is what is offered, with
+ * the missing tone named on the label rather than quietly dropped.
+ *
+ * Only the extensions give way. The third and the seventh are what the
+ * chord IS; a grip without them is a different chord, not a thinner
+ * voicing of this one. So a triad relaxes to itself, and a window that
+ * cannot hold a triad stays honestly empty.
+ */
+export function shellRequirements(degrees, type) {
+  const { required, anyOf } = chordRequirements(degrees, type);
+  return {
+    required: new Set([...required].filter(d => !EXTENSIONS.has(d))),
+    anyOf,
+  };
 }
 
 /** Does this set of sounding degrees satisfy the chord? */
@@ -110,6 +132,38 @@ function satisfies(sounded, { required, anyOf }) {
   return true;
 }
 
+// ---- Things every grip needs saying about it ---------------
+// Three questions get asked at every point a voicing is built, on both
+// the guitar path and the bass one, and they were being answered in
+// slightly different words each time — which is how the two ways of
+// finding the lowest note came to disagree about whether the fret
+// counted.
+
+/** A grip's identity: which fret on which string, and nothing else. */
+const gripKey = cells => cells.map(c => `${c.string}:${c.fret}`).join("|");
+
+/** The cell sounding the lowest pitch — the one that names the inversion. */
+const lowestCell = cells =>
+  cells.reduce((low, c) => (pitchAt(c) < pitchAt(low) ? c : low), cells[0]);
+
+/**
+ * Is this grip a stretch?
+ *
+ * The same question the ease score asks, so it has to be asked the same
+ * way. An instrument carrying real reach figures is measured in inches,
+ * because a fret count means different things at different ends of a
+ * short neck: the standard mandolin C shape at 12-10-7-8 covers six
+ * frets but only 2.3 inches, which is inside the reach that instrument
+ * declares comfortable. Counting frets alone labelled it a stretch while
+ * the scorer was charging it as an easy grip.
+ */
+function isStretch(cells, span) {
+  const { reach } = instrument.chords;
+  return reach.max !== Infinity
+    ? handReach(cells) > reach.comfort
+    : span > chordComfort();
+}
+
 // Whichever note falls lowest names the inversion. Sevenths reach a third
 // one, with the seventh itself in the bass.
 const INVERSION = {
@@ -120,6 +174,15 @@ const INVERSION = {
   "6": "3rd inversion",  "7": "3rd inversion",
   "b7": "3rd inversion", "bb7": "3rd inversion",
 };
+
+/**
+ * What to call a grip, given what is sounding and what is underneath.
+ *
+ * A grip with no root at all isn't an inversion of anything — it's a
+ * rootless voicing, and worth saying so.
+ */
+const labelFor = (notes, bass) =>
+  notes.some(n => n.degree === "1") ? (INVERSION[bass] ?? "inversion") : "rootless";
 
 /**
  * Can this grip be fingered, and with how many?
@@ -425,12 +488,43 @@ function voicingEase(voicing, degrees) {
   // a four-string mandolin as it does on a six-string guitar — both are
   // 0 left out — instead of a mandolin's fullest possible grip reading
   // as merely middling on a table sized for six.
+  // A drone string is not one of the voices the hand is spreading the
+  // chord across, so it has no say in how thinly it is spread. Counting
+  // it made a banjo's 5th string a liability on exactly the chords it
+  // helps most: letting it ring pushed a dense grip one row up this
+  // table and cost more than the free chord tone was worth. Its own
+  // worth is settled just below, on its own terms.
   const dense = degrees.length >= 5;
-  const leftOut = numStrings - strings.length;
+  const voiced = numStrings - droneStrings.size;
+  const leftOut = voiced - strings.filter(s => !droneStrings.has(s)).length;
   score += dense
     ? ({ 0: 2, 1: 0.5, 2: -1.5, 3: 0.5 }[leftOut] ?? 2)
     : ({ 0: -3, 1: -2, 2: -0.5, 3: 2 }[leftOut] ?? 3);
   score += strings[0] * 0.2;       // a run reaching the bass strings is fuller
+
+  // The drone string.
+  //
+  // A banjo's 5th string is not an open string in the sense the bonus
+  // above means. It is ringing whatever the hand is doing — there is no
+  // reach to the nut, no finger to free, nothing to weigh against the
+  // grip — so a tone arriving on it is arriving for nothing, and the
+  // capped open bonus (which the fretted open strings are competing for)
+  // undersells that.
+  //
+  // It matters most exactly where the neck is tightest. A dense chord has
+  // more tones than a hand has fingers, and the tone the drone can supply
+  // is one the fingers no longer have to: the root off the 5th string is
+  // what leaves all four fingers free for the third, the seventh and the
+  // extension the chord is named for. So the same free string is worth
+  // more on a 13th than it is on a triad, where the fingers were never
+  // short in the first place.
+  cells.forEach((c, i) => {
+    if (c.fret !== 0 || !droneStrings.has(c.string)) return;
+    score -= dense ? 1.5 : 0.5;
+    // And the root above all, since that is the tone the dense-chord
+    // rules are otherwise most willing to drop.
+    if (notes[i].degree === "1") score -= dense ? 1.0 : 0.3;
+  });
 
   // Every tone the chord names should be sounding if the hand allows it.
   const sounded = new Set(notes.map(n => n.degree));
@@ -497,7 +591,11 @@ export function rankVoicings(list, type, { limit = 4 } = {}) {
       : voicingEase(v, degrees);
     return {
       ...v, ease: score,
-      shape: shape ?? null, grip: grip ?? null, omits: omits ?? [],
+      shape: shape ?? null, grip: grip ?? null,
+      // The bass works its omissions out while scoring; the guitar search
+      // records them as it builds the grip. Either way they belong to the
+      // voicing, so a scorer with nothing to say must not erase them.
+      omits: omits ?? v.omits ?? [],
     };
   }).sort((a, b) => a.ease - b.ease);
 
@@ -539,9 +637,16 @@ export function rankVoicings(list, type, { limit = 4 } = {}) {
  *
  * @returns {Array<{cells, notes, lo, hi, strings, fingers, barre, ...}>}
  */
-function fullVoicings(root, type, { openAnywhere = false } = {}) {
+function fullVoicings(root, type, { openAnywhere = false, relaxed = false } = {}) {
   const grid = buildScaleGrid(root, type);
-  const wants = chordRequirements(getScaleDegrees(type), type);
+  const degrees = getScaleDegrees(type);
+  // Asked for whole by default. `relaxed` is the second pass, run only
+  // where the first found nothing: the chord's shell, with whatever
+  // extensions happen to fit, and a note of what had to go.
+  const strict = chordRequirements(degrees, type);
+  const wants  = relaxed ? shellRequirements(degrees, type) : strict;
+  const omitsOf = sounded =>
+    relaxed ? [...strict.required].filter(d => !sounded.has(d)) : [];
   const out = [];
   const seen = new Set();
 
@@ -554,17 +659,17 @@ function fullVoicings(root, type, { openAnywhere = false } = {}) {
   if (grid.every(row => row[0])) {
     const cells = grid.map((row, s) => ({ string: s, fret: 0 }));
     const notes = cells.map(c => grid[c.string][0]);
-    if (satisfies(new Set(notes.map(n => n.degree)), wants)) {
-      const lowest = cells.reduce((low, c) =>
-        openMidi[c.string] < openMidi[low.string] ? c : low, cells[0]);
-      const bass = grid[lowest.string][0].degree;
+    const sounded = new Set(notes.map(n => n.degree));
+    if (satisfies(sounded, wants)) {
+      const lowest = lowestCell(cells);
+      const bass = grid[lowest.string][lowest.fret].degree;
       out.push({
         cells, notes, span: 0, stretch: false,
         lo: 0, hi: 0, strings: cells.map(c => c.string),
         fingers: 0, barre: null, barres: [],
         order: notes.map(n => n.degree).join("-"),
-        bass,
-        label: notes.some(n => n.degree === "1") ? (INVERSION[bass] ?? "inversion") : "rootless",
+        bass, omits: omitsOf(sounded),
+        label: labelFor(notes, bass),
       });
     }
   }
@@ -644,36 +749,32 @@ function fullVoicings(root, type, { openAnywhere = false } = {}) {
             const notes = cells.map(c => grid[c.string][c.fret]);
             // Every note it must sound has to be here; the rest are free
             // to appear or not.
-            if (!satisfies(new Set(notes.map(n => n.degree)), wants)) return;
+            const sounded = new Set(notes.map(n => n.degree));
+            if (!satisfies(sounded, wants)) return;
 
             // The root need not be the lowest note. Whichever tone falls
             // under the others names the inversion, and a guitar reaches
             // those as readily as it reaches root position.
-            const lowest = cells.reduce((low, c) =>
-              openMidi[c.string] + c.fret < openMidi[low.string] + low.fret ? c : low, cells[0]);
+            const lowest = lowestCell(cells);
             const bass = grid[lowest.string][lowest.fret].degree;
 
             const grip = gripFingering(cells);
             if (!grip) return;
 
-            const key = cells.map(c => `${c.string}:${c.fret}`).join("|");
+            const key = gripKey(cells);
             if (seen.has(key)) return;
             seen.add(key);
 
             out.push({
               cells, notes, span,
-              stretch: span > chordComfort(),
+              stretch: isStretch(cells, span),
               lo, hi, strings,
               fingers: grip.fingers,
               barre: grip.barre,
               barres: grip.barres,
               order: notes.map(n => n.degree).join("-"),
-              bass,
-              // A grip with no root at all isn't an inversion of anything —
-              // it's a rootless voicing, and worth saying so.
-              label: notes.some(n => n.degree === "1")
-                ? (INVERSION[bass] ?? "inversion")
-                : "rootless",
+              bass, omits: omitsOf(sounded),
+              label: labelFor(notes, bass),
             });
             return;
           }
@@ -716,16 +817,21 @@ export function hasOpenVoicing(root, type) {
  * so grips that let one ring under a hand further up the neck are offered
  * too. Off, the only open shapes are the ones at the nut.
  *
- * @returns {Array<{cells, notes, lo, hi, strings, order, label}>}
+ * `relaxed` asks for the chord's shell instead of the whole chord, and is
+ * meant for the second pass when a stretch of neck turns out to hold no
+ * complete grip. See shellRequirements. Each grip it returns carries the
+ * tones it had to leave out, so the label can admit to them.
+ *
+ * @returns {Array<{cells, notes, lo, hi, strings, order, label, omits}>}
  */
-export function chordVoicings(root, type, { stacked = true, openAnywhere = false } = {}) {
+export function chordVoicings(root, type, { stacked = true, openAnywhere = false, relaxed = false } = {}) {
   // A bass has one way of voicing a chord, not two. The guitar's split
   // between a stacked shape and a full strummed grip is about doubling
   // across six strings, and there is no doubling to be had on four.
   if (instrument.chords.strategy === "bass") {
     return bassVoicings(root, type, { openAnywhere });
   }
-  if (!stacked) return fullVoicings(root, type, { openAnywhere });
+  if (!stacked) return fullVoicings(root, type, { openAnywhere, relaxed });
   const grid = buildScaleGrid(root, type);
 
   // A stack puts one note on each string, so it can only hold as many
@@ -779,7 +885,7 @@ export function chordVoicings(root, type, { stacked = true, openAnywhere = false
       if (i === size) {
         const cells = strings.map((string, k) => ({ string, fret: chosen[k] }));
         const notes = cells.map(c => grid[c.string][c.fret]);
-        const pitches = cells.map(c => openMidi[c.string] + c.fret);
+        const pitches = cells.map(pitchAt);
 
         // Must climb as it crosses the strings, and sound every tone once.
         for (let k = 1; k < size; k++) if (pitches[k] <= pitches[k - 1]) return;
@@ -803,17 +909,17 @@ export function chordVoicings(root, type, { stacked = true, openAnywhere = false
             stopped.length && Math.max(...stopped) > instrument.chords.openReach) return;
 
         const frets = cells.map(c => c.fret);
-        const key = cells.map(c => `${c.string}:${c.fret}`).join("|");
+        const key = gripKey(cells);
         if (seen.has(key)) return;      // two colourings can meet here
         seen.add(key);
         out.push({
           cells, notes, span,
-          stretch: span > chordComfort(),
+          stretch: isStretch(cells, span),
           lo: Math.min(...frets), hi: Math.max(...frets),
           strings,
           order: notes.map(n => n.degree).join("-"),
           bass,
-          label: INVERSION[bass] ?? "inversion",
+          label: labelFor(notes, bass),
         });
         return;
       }
@@ -892,7 +998,7 @@ const LOW_INTERVAL_LIMITS = [
  * @param {number} midi  the lower pitch
  * @returns {number} semitones
  */
-export function minIntervalAt(midi) {
+function minIntervalAt(midi) {
   for (const { semitones, from } of LOW_INTERVAL_LIMITS) {
     if (midi >= from) return semitones;
   }
@@ -1127,7 +1233,7 @@ function bassSearch(root, type, core, openAnywhere) {
         const grip = gripFingering(cells);
         if (!grip) return;
 
-        const key = cells.map(c => `${c.string}:${c.fret}`).join("|");
+        const key = gripKey(cells);
         if (seen.has(key)) return;
         seen.add(key);
 
@@ -1143,7 +1249,7 @@ function bassSearch(root, type, core, openAnywhere) {
           barres: grip.barres,
           order: notes.map(n => n.degree).join("-"),
           bass,
-          label: INVERSION[bass] ?? "inversion",
+          label: labelFor(notes, bass),
         });
         return;
       }
@@ -1154,11 +1260,11 @@ function bassSearch(root, type, core, openAnywhere) {
       // down, and cutting it there is what keeps a dense chord's search
       // from running into six figures.
       const prev = i > 0
-        ? openMidi[strings[i - 1]] + chosen[i - 1]
+        ? midiAt(strings[i - 1], chosen[i - 1])
         : null;
       for (const f of options[strings[i]]) {
         if (prev !== null) {
-          const here = openMidi[strings[i]] + f;
+          const here = midiAt(strings[i], f);
           if (here <= prev) continue;
           if (clarityMargin(prev, here) < 0) continue;
         }

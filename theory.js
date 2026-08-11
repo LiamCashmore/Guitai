@@ -128,7 +128,7 @@ const scaleFormulas = {
   // ---- Extended and altered -----------------------------
   // Written as pitch-class sets like everything else, so a 13th chord is
   // simply a seven-note set. Which of those notes a guitar can actually
-  // sound is decided later, by essentialDegrees.
+  // sound is decided later, by chordRequirements.
   "Power (5)":               [7,5],         // 1  5
   "Add9":                    [2,2,3,5],     // 1  9  3  5
   "Minor Add9":              [2,1,4,5],     // 1  9 b3  5

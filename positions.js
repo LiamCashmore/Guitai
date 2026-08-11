@@ -98,7 +98,7 @@ export function cagedPositions(root, type) {
 }
 
 // Null out every cell outside a fret-window box.
-export function maskToBox(grid, box) {
+function maskToBox(grid, box) {
   return grid.map(row =>
     row.map((cell, f) => (cell && f >= box.lo && f <= box.hi) ? cell : null)
   );
@@ -113,7 +113,7 @@ export function maskToBox(grid, box) {
  * the scale, it is shown; notes that happen to fall close together on
  * one string are simply easy to play, not a problem to prune away.
  */
-export function prunePlayable(grid) {
+function prunePlayable(grid) {
   const out = grid.map(row => row.slice());
 
   const bestByMidi = new Map();

@@ -96,8 +96,8 @@ function el(tag, attrs) {
 // board's nut; a drone string — a banjo's 5th — starts at its own,
 // partway up the neck, so its whole neighbourhood shifts with it.
 function stringNutX(s) {
-  const startFret = droneStrings.get(s);
-  return startFret ? PAD_L + (startFret - 1) * FRET_W : PAD_L;
+  const nutFret = droneStrings.get(s);
+  return nutFret ? PAD_L + nutFret * FRET_W : PAD_L;
 }
 // x-center of a note at a given fret (0 = open, sits left of the nut).
 // `s` is only needed for fret 0, to find which nut "left of" means.
@@ -126,14 +126,15 @@ function boardBotY() { return PAD_T + (numStrings - 1) * STR_GAP; }
  * How far down a fret's wire reaches.
  *
  * Ordinarily to the bottom row, same as every other fret. But a fret a
- * drone string hasn't reached yet — a banjo's first four, below its own
- * nut — has no business drawing a fretboard under a string that isn't
- * there, so the wire stops short of that row instead.
+ * drone string hasn't reached yet — a banjo's first five, up to and
+ * including the one its own nut sits on — has no business drawing a
+ * fretboard under a string that isn't there, so the wire stops short of
+ * that row instead. The nut itself is the wood's edge, not a wire.
  */
 function fretBottomY(f) {
   let cutRow = null;
-  for (const [s, startFret] of droneStrings) {
-    if (f >= startFret) continue;
+  for (const [s, nutFret] of droneStrings) {
+    if (f > nutFret) continue;
     const row = stringRow(s);
     cutRow = cutRow === null ? row : Math.max(cutRow, row);
   }
@@ -245,7 +246,16 @@ const labelMode = () => LABEL_MODES[labelIndex].mode;
 // The stretch of neck being searched for grips. Chords are always shown
 // one hand-position at a time, so this is simply where that hand is —
 // dragged along the neck by the bar above it.
-const WINDOW_WIDTH = 5;
+//
+// How wide that hand is belongs to the instrument, not to the app: five
+// frets is a guitarist's, and on a mandolin — where the frets sit half as
+// far apart and the standard closed shapes are correspondingly wider —
+// five frets is narrower than the hand really is, and hides grips.
+// See INSTRUMENTS.mandolin.chords.windowFrets for the one that prompted it.
+const windowWidth = () => instrument.chords.windowFrets ?? 5;
+// The lowest fret the window may open on: any further up and it would
+// hang off the end of the neck.
+const lastWindowLo = () => Math.max(0, numFrets - windowWidth() + 1);
 let winLo = 0;
 
 // ---- Staying put ------------------------------------------
@@ -541,9 +551,45 @@ function bandEdges(lo, hi) {
   };
 }
 const windowEdges = lo => {
-  const hi = Math.min(lo + WINDOW_WIDTH - 1, numFrets);
+  const hi = Math.min(lo + windowWidth() - 1, numFrets);
   return { ...bandEdges(lo, hi), hi };
 };
+
+/**
+ * Slide the band under the notes to cover frets lo..hi, or take it away.
+ *
+ * `settle` jumps into place with the transition suppressed instead of
+ * gliding, which is what the first reveal wants — there is nowhere for it
+ * to glide from.
+ */
+function showBand(lo, hi, { settle = false } = {}) {
+  const { x1, x2 } = bandEdges(lo, hi);
+  const topY = boardTopY(), botY = boardBotY();
+  if (settle && highlight.getAttribute("opacity") === "0") {
+    highlight.style.transition = "none";
+    requestAnimationFrame(() => { highlight.style.transition = ""; });
+  }
+  highlight.setAttribute("x", x1);
+  highlight.setAttribute("width", x2 - x1);
+  highlight.setAttribute("y", topY - 24);
+  highlight.setAttribute("height", (botY - topY) + 48);
+  highlight.setAttribute("opacity", 0.12);
+}
+
+function hideBand() {
+  highlight.setAttribute("opacity", 0);
+}
+
+/**
+ * Grey out the stepper arrows at the ends of a list of positions. An
+ * empty list is both ends at once, so both go off.
+ */
+function syncArrows(index, count) {
+  const prev = document.getElementById("prevPos");
+  const next = document.getElementById("nextPos");
+  if (prev) prev.disabled = count === 0 || index <= 0;
+  if (next) next.disabled = index >= count - 1;
+}
 
 /**
  * A bar above the neck, dragged along it to move where you're looking.
@@ -845,7 +891,7 @@ function onDragMove(evt) {
         render();
       }
     } else {
-      const lo = Math.max(0, Math.min(numFrets - WINDOW_WIDTH + 1, fret));
+      const lo = Math.max(0, Math.min(lastWindowLo(), fret));
       if (lo !== winLo) {
         winLo = lo;
         posIndex = 0;
@@ -1444,6 +1490,29 @@ function effectiveVoicing(root, type, voicing) {
 }
 
 /**
+ * Can a hand sitting at frets lo..hi hold this grip?
+ *
+ * Everything the fingers do has to be inside the window — that is what
+ * the window means, and it is why the open shapes appear as it reaches
+ * the nut and not before. Two things are exempt from it:
+ *
+ *   - an open string, when OPEN is on. It needs no finger, so it can ring
+ *     wherever the hand happens to be.
+ *   - a drone string, always. A banjo's 5th string has no fret under the
+ *     hand at all: it rings open from its own short nut regardless of
+ *     where the hand is, so asking whether it is "inside the window" is
+ *     asking the wrong question. The ghost layer and the open-reach cap
+ *     in the voicing search already treat it this way; this is the last
+ *     place that didn't, and it was quietly throwing away most of the
+ *     grips on the instrument — every one that lets the 5th string ring.
+ */
+function gripFitsWindow(voicing, lo, hi) {
+  return voicing.cells.every(c =>
+    (c.fret === 0 && (openOn || droneStrings.has(c.string))) ||
+    (c.fret >= lo && c.fret <= hi));
+}
+
+/**
  * Where to open the window when the chord under it changes.
  *
  * At the hand's last position if a grip lives there, and otherwise at the
@@ -1457,15 +1526,12 @@ function effectiveVoicing(root, type, voicing) {
  * so a window left where the scale was would frequently hold nothing.
  */
 function seekWindow(voicings, type, anchor) {
-  const last = Math.max(0, numFrets - WINDOW_WIDTH + 1);
+  const last = lastWindowLo();
   const want = Math.max(0, Math.min(last, anchor));
   if (!voicings.length) return want;
 
-  const within = lo => {
-    const hi = lo + WINDOW_WIDTH - 1;
-    return voicings.filter(v => v.cells.every(c =>
-      (openOn && c.fret === 0) || (c.fret >= lo && c.fret <= hi)));
-  };
+  const within = lo =>
+    voicings.filter(v => gripFitsWindow(v, lo, lo + windowWidth() - 1));
   if (within(want).length) return want;
 
   // The hand has to move, so it may as well move somewhere worth being.
@@ -1501,6 +1567,15 @@ function gripName(voicing) {
               : "";
   const omits = voicing.omits?.length ? ` · omits ${voicing.omits.join(", ")}` : "";
   return named + omits;
+}
+
+/**
+ * What the hand is doing to hold it — the same sentence wherever a grip
+ * is named, a chord on its own or a chord inside a progression.
+ */
+function handName(voicing) {
+  return voicing.barre ? " · barre"
+       : voicing.cells.some(c => c.fret === 0) ? " · open" : "";
 }
 
 /**
@@ -1548,13 +1623,16 @@ function toggleGripNote(pos) {
  * for an answer that never changes. Only one chord is on screen at a
  * time, so remembering the last one is enough.
  */
-let voicingCache = { key: null, list: null };
-function voicingsFor(root, type, openAnywhere) {
+let voicingCache = { key: null, whole: null, shell: null };
+function voicingsFor(root, type, openAnywhere, { relaxed = false } = {}) {
   const key = `${root}|${type}|${openAnywhere}`;
-  if (voicingCache.key !== key) {
-    voicingCache = { key, list: chordVoicings(root, type, { stacked: false, openAnywhere }) };
-  }
-  return voicingCache.list;
+  if (voicingCache.key !== key) voicingCache = { key, whole: null, shell: null };
+  const slot = relaxed ? "shell" : "whole";
+  // The shell search is a second walk of the whole neck, so it is only
+  // paid for when a window turns out to need it — which for most chords
+  // is never.
+  voicingCache[slot] ??= chordVoicings(root, type, { stacked: false, openAnywhere, relaxed });
+  return voicingCache[slot];
 }
 
 /**
@@ -1668,10 +1746,10 @@ function render({ animate = true } = {}) {
   if (isProgressionMode()) {
     // Coming from a scale, the progression opens where the hand was left.
     if (seekAnchor) {
-      winLo = Math.max(0, Math.min(numFrets - WINDOW_WIDTH + 1, anchorFret));
+      winLo = Math.max(0, Math.min(lastWindowLo(), anchorFret));
       seekAnchor = false;
     }
-    const winHi = winLo + WINDOW_WIDTH - 1;
+    const winHi = winLo + windowWidth() - 1;
 
     // A new key, preset or stretch of neck is a new route; show it from
     // its first chord.
@@ -1703,17 +1781,7 @@ function render({ animate = true } = {}) {
     activeStops = null;
     activeBand = { lo: winLo, hi: Math.min(winHi, numFrets) };
     anchorFret = winLo;
-    if (activeBand) {
-      const { x1, x2 } = bandEdges(activeBand.lo, activeBand.hi);
-      const topY = boardTopY(), botY = boardBotY();
-      highlight.setAttribute("x", x1);
-      highlight.setAttribute("width", x2 - x1);
-      highlight.setAttribute("y", topY - 24);
-      highlight.setAttribute("height", (botY - topY) + 48);
-      highlight.setAttribute("opacity", 0.12);
-    } else {
-      highlight.setAttribute("opacity", 0);
-    }
+    showBand(activeBand.lo, activeBand.hi);
     renderWindowHandle();
     renderNotes(grid, mode);
     renderPathLine({ animate: false });
@@ -1721,24 +1789,15 @@ function render({ animate = true } = {}) {
     const posLabel = document.getElementById("posLabel");
     if (posLabel) {
       posLabel.classList.remove("unplayable");
-      if (!voicing) {
-        posLabel.textContent = "no grips found for this progression";
-      } else {
-        // The numeral says what the chord is doing, the symbol says what
-        // to call it, and the rest is what the hand has to do — which is
-        // the whole reason these particular grips were chosen.
-        const shape = gripName(voicing);
-        const hand = voicing.barre ? " · barre"
-          : voicing.cells.some(c => c.fret === 0) ? " · open" : "";
-        posLabel.textContent =
-          `${posIndex + 1}/${chords.length} · ${voicing.numeral} · ${voicing.symbol}` +
-          shape + hand;
-      }
+      // The numeral says what the chord is doing, the symbol says what to
+      // call it, and the rest is what the hand has to do — which is the
+      // whole reason these particular grips were chosen.
+      posLabel.textContent = voicing
+        ? `${posIndex + 1}/${chords.length} · ${voicing.numeral} · ${voicing.symbol}`
+          + gripName(voicing) + handName(voicing)
+        : "no grips found for this progression";
     }
-    const prevB = document.getElementById("prevPos");
-    const nextB = document.getElementById("nextPos");
-    if (prevB) prevB.disabled = posIndex <= 0;
-    if (nextB) nextB.disabled = posIndex >= chords.length - 1;
+    syncArrows(posIndex, chords.length);
     return;
   }
 
@@ -1754,17 +1813,23 @@ function render({ animate = true } = {}) {
       winLo = seekWindow(all, type, anchorFret);
       seekAnchor = false;
     }
-    const winHi = winLo + WINDOW_WIDTH - 1;
+    const winHi = winLo + windowWidth() - 1;
     let voicings = all;
-    // Keep only grips that fall inside the chosen stretch. With OPEN off,
-    // an open string counts as fret 0 and so has to be inside it too —
-    // the open shapes appear when the window reaches the nut and not
-    // before, which is what makes the familiar chord for each part of the
-    // neck show first. With OPEN on, an open string is exempt: it needs
-    // no finger, so it can ring wherever the hand is.
+    // Keep only grips a hand at this stretch of neck can hold — see
+    // gripFitsWindow for what that means and what escapes it.
     {
-      const inWindow = voicings.filter(v => v.cells.every(c =>
-        (openOn && c.fret === 0) || (c.fret >= winLo && c.fret <= winHi)));
+      let inWindow = all.filter(v => gripFitsWindow(v, winLo, winHi));
+      // Nothing fits. Sometimes that is the truth about the neck and the
+      // board should say so, but on a dense chord it usually isn't: the
+      // tones are simply not all reachable at once here — a banjo's G13
+      // between frets 4 and 8 has its seventh and its thirteenth on the
+      // same string and nowhere else — and what a player does there is
+      // play the shell and let the extension go. So ask again for the
+      // shell, and let the label admit what is missing.
+      if (!inWindow.length) {
+        inWindow = voicingsFor(root, type, openOn, { relaxed: true })
+          .filter(v => gripFitsWindow(v, winLo, winHi));
+      }
       // A chord has hundreds of correct fingerings in any given stretch
       // of neck and a player wants three or four of them: the ones they
       // would actually be taught. So the list is ranked by how the hand
@@ -1804,15 +1869,7 @@ function render({ animate = true } = {}) {
     activeStops = null;                    // chords slide a window instead
     activeBand = { lo: winLo, hi: Math.min(winHi, numFrets) };
     anchorFret = winLo;
-    {
-      const { x1, x2 } = bandEdges(activeBand.lo, activeBand.hi);
-      const topY = boardTopY(), botY = boardBotY();
-      highlight.setAttribute("x", x1);
-      highlight.setAttribute("width", x2 - x1);
-      highlight.setAttribute("y", topY - 24);
-      highlight.setAttribute("height", (botY - topY) + 48);
-      highlight.setAttribute("opacity", 0.12);
-    }
+    showBand(activeBand.lo, activeBand.hi);
     renderWindowHandle();
     renderNotes(grid, mode);
     renderPathLine({ animate: false });
@@ -1830,9 +1887,6 @@ function render({ animate = true } = {}) {
         // just made the line long enough to stop being read. What is left
         // is what the board can't say: which of the shapes this is, and
         // what the hand has to do to hold it.
-        const shape = gripName(voicing);
-        const hand = voicing.barre ? " · barre"
-          : voicing.cells.some(c => c.fret === 0) ? " · open" : "";
         // An edit can ask for a hand nobody has. Still shown, still played
         // — but flagged, so the note to take back off is obvious.
         posLabel.classList.toggle("unplayable",
@@ -1843,16 +1897,11 @@ function render({ animate = true } = {}) {
         const inv = voicing.edited ? " · edited"
           : voicing.label && voicing.label !== "root position" ? ` · ${voicing.label}` : "";
         posLabel.textContent =
-          `${posIndex + 1}/${voicings.length}${shape}${inv}${hand}` +
+          `${posIndex + 1}/${voicings.length}${gripName(voicing)}${inv}${handName(voicing)}` +
           (voicing.stretch ? " · stretch" : "");
       }
     }
-    const prevB = document.getElementById("prevPos");
-    const nextB = document.getElementById("nextPos");
-    if (prevB && nextB) {
-      prevB.disabled = posIndex === 0;
-      nextB.disabled = posIndex >= voicings.length - 1;
-    }
+    syncArrows(posIndex, voicings.length);
     return;
   }
   chordLayer.innerHTML = "";
@@ -1901,22 +1950,9 @@ function render({ animate = true } = {}) {
   // stands until there is a new one.
   if (span) anchorFret = span.lo;
   if (!span) activeStops = null;
-  if (span) {
-    const { x1, x2 } = bandEdges(span.lo, span.hi);
-    // First reveal jumps into place; later moves glide.
-    if (highlight.getAttribute("opacity") === "0") {
-      highlight.style.transition = "none";
-      highlight.setAttribute("x", x1);
-      highlight.setAttribute("width", x2 - x1);
-      requestAnimationFrame(() => { highlight.style.transition = ""; });
-    } else {
-      highlight.setAttribute("x", x1);
-      highlight.setAttribute("width", x2 - x1);
-    }
-    highlight.setAttribute("opacity", 0.12);
-  } else {
-    highlight.setAttribute("opacity", 0);
-  }
+  // First reveal jumps into place; later moves glide.
+  if (span) showBand(span.lo, span.hi, { settle: true });
+  else hideBand();
 
   // 4) Remember what's on the board — a run may only use these notes.
   visibleCells = new Set();
@@ -1971,12 +2007,9 @@ function render({ animate = true } = {}) {
         : `${posIndex + 1}/${boxCount} · frets ${lo}–${hi}`;
     }
   }
-  const prev = document.getElementById("prevPos");
-  const next = document.getElementById("nextPos");
-  if (prev && next) {
-    prev.disabled = !box || posIndex === 0;
-    next.disabled = !box || posIndex >= boxCount - 1;
-  }
+  // No position on screen means nothing to step between, which reads as
+  // a list of zero — both arrows off.
+  syncArrows(posIndex, box ? boxCount : 0);
 }
 
 // ============================================================
@@ -2111,7 +2144,7 @@ function switchInstrument(id) {
   ghostCells = new Set();
   currentBase = null;
   currentVoicing = null;
-  voicingCache = { key: null, list: null };
+  voicingCache = { key: null, whole: null, shell: null };
   progressionCache = { key: null, chords: [] };
   posIndex = 0;
   winLo = 0;

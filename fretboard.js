@@ -120,6 +120,17 @@ export const INSTRUMENTS = {
       maxSpan: 7,
       comfortSpan: 5,
       openSpan: 5,
+      // How wide the hand-position window is on screen. Five frets is a
+      // guitar's hand and the default everywhere else; a mandolin needs
+      // six, and not as a luxury — six is where a whole class of standard
+      // grips lives. C major as 12-10-7-8 (pinky, ring, index, middle;
+      // 5-1-3-1) spans frets 7 to 12, and every note of it is inside one
+      // still hand: 2.3 inches on this scale length, which is under the
+      // comfort figure above. The search has always found that shape. A
+      // five-fret window could never show it, because no five frets
+      // contain it — the window was hiding grips the model itself calls
+      // comfortable.
+      windowFrets: 6,
       stretchPenalty: 2.5,
       // A guitarist reaches for the open chord and counts fewer fingers
       // as easier; a mandolin player's default is the closed, movable
@@ -163,12 +174,18 @@ export const INSTRUMENTS = {
     // string on the instrument.
     openMidi: [50, 55, 59, 62, 67],
     numFrets: 17,
-    // The 5th string has its own short nut around the 5th fret and is
-    // never fretted below it — on a real neck because the string simply
-    // isn't there yet. It sounds open, or fretted from its own nut on
-    // up; `startFret` is where both the model's fret range and the
-    // view's drawing of its nut begin.
-    droneStrings: [{ string: 4, startFret: 5 }],
+    // The 5th string is short: it has its own nut AT the 5th fret, and
+    // there is simply no string below that to press. So it sounds open,
+    // or fretted from the 6th fret on up — and the 6th fret is one
+    // semitone above the open g, not six, because the string starts at
+    // the 5th. That is why the 5th string reaches its octave at the
+    // 17th fret rather than the 12th, which is the fact to check this
+    // against: 5 + 12 = 17.
+    //
+    // `nutFret` is that nut's fret. Everything follows from it — which
+    // frets exist, what each of them sounds, and where the view draws
+    // the string's own nut and peg.
+    droneStrings: [{ string: 4, nutFret: 5 }],
     // Pitch order puts the 5th string above the 1st, which is correct
     // for the model — everything here reasons in ascending pitch — but
     // physically the 5th string sits apart from the other four, off the
@@ -208,12 +225,11 @@ export let tuning       = openMidi.map(m => FLAT_NAMES[midiToPc(m)]);   // low -
 export let chromaticGrid = capDroneStrings(
   openMidi.map(m => getFretPcs(midiToPc(m), numFrets)), instrument);
 export let numStrings    = chromaticGrid.length;
-// Strings with no fret but the open one — a banjo's 5th string, so far —
-// mapped to the fret the view should draw their nut and open note at.
-// Read by paths.js, which walks raw fret arithmetic rather than this
-// grid and so needs telling directly which strings that arithmetic
-// isn't allowed to fret; and by view.js, for where to draw them.
-export let droneStrings  = new Map((instrument.droneStrings ?? []).map(d => [d.string, d.startFret]));
+// Short strings that start partway up the neck — a banjo's 5th, so far —
+// mapped to the fret their own nut sits at. Read by midiAt below, by
+// paths.js, which walks raw fret arithmetic rather than this grid and so
+// needs telling directly, and by view.js for where to draw them.
+export let droneStrings  = new Map((instrument.droneStrings ?? []).map(d => [d.string, d.nutFret]));
 // Which row each string draws on, bottom to top — identity unless an
 // instrument says otherwise (see the banjo entry above for why one
 // would). Purely a view concern; nothing in the model reads it.
@@ -224,21 +240,44 @@ function identityOrder(n) {
 }
 
 /**
- * Blank out the frets a drone string doesn't physically have.
+ * Re-lay a drone string's frets, which do not start where the board's do.
  *
- * A drone string is genuinely short, not fretless: it sounds open, and
- * it can be fretted from its own nut on up, but nothing below that nut
- * exists to press. Blanking exactly that range means every search built
- * on chromaticGrid — scale positions, chord voicings — respects it for
- * free, the same way it already respects a fret simply not being in the
- * scale.
+ * A drone string is genuinely short, not fretless. Its nut sits partway
+ * up the neck, and two things follow from that. Nothing below the nut
+ * exists to press — blanking exactly that range means every search built
+ * on chromaticGrid respects it for free, the same way it already respects
+ * a fret simply not being in the scale.
+ *
+ * And the frets it does have are counted from ITS nut, not the board's.
+ * A banjo's 5th string is open g at the 5th fret, so the 6th fret is one
+ * semitone above the open string, not six. Numbering it by the board
+ * would put a C where the G# is, and would have the string reach its
+ * octave at the 12th fret when a banjo's 5th string reaches it at the
+ * 17th — which is the arithmetic to check this against: 5 + 12 = 17.
  */
 function capDroneStrings(grid, forInstrument) {
   for (const d of forInstrument.droneStrings ?? []) {
-    grid[d.string] = grid[d.string].map((pc, f) =>
-      (f === 0 || f >= d.startFret) ? pc : null);
+    const openPc = grid[d.string][0];
+    grid[d.string] = grid[d.string].map((_, f) => {
+      if (f === 0) return openPc;                        // the open string
+      if (f <= d.nutFret) return null;                   // below its nut
+      return (openPc + f - d.nutFret) % 12;
+    });
   }
   return grid;
+}
+
+/**
+ * What pitch a fret sounds on a string, in MIDI — the one place that
+ * arithmetic is done.
+ *
+ * Ordinarily it is the open pitch plus the fret number. A drone string
+ * is the exception, and has to be: its nut is up the neck, so the fret
+ * number overstates how far above the open note it is by exactly the
+ * distance to that nut. Fret 0 stays the open note either way.
+ */
+export function midiAt(string, fret) {
+  return openMidi[string] + Math.max(0, fret - (droneStrings.get(string) ?? 0));
 }
 
 /**
@@ -249,7 +288,7 @@ function capDroneStrings(grid, forInstrument) {
  * fourths, a mandolin in fifths, and that difference is why the same
  * scale makes a different shape on each.
  */
-export function stringIntervals() {
+function stringIntervals() {
   return openMidi.slice(1).map((m, i) => m - openMidi[i]);
 }
 
@@ -295,7 +334,7 @@ export function setInstrument(id) {
   tuning        = openMidi.map(m => FLAT_NAMES[midiToPc(m)]);
   chromaticGrid = capDroneStrings(openMidi.map(m => getFretPcs(midiToPc(m), numFrets)), next);
   numStrings    = chromaticGrid.length;
-  droneStrings  = new Map((next.droneStrings ?? []).map(d => [d.string, d.startFret]));
+  droneStrings  = new Map((next.droneStrings ?? []).map(d => [d.string, d.nutFret]));
   displayOrder  = next.displayOrder ?? identityOrder(numStrings);
   return instrument;
 }
@@ -323,6 +362,6 @@ export function buildScaleGrid(root, type) {
 
   return chromaticGrid.map((stringPcs, s) =>
     stringPcs.map((pc, f) =>
-      (pc in byPc) ? { pc, midi: openMidi[s] + f, ...byPc[pc] } : null)
+      (pc in byPc) ? { pc, midi: midiAt(s, f), ...byPc[pc] } : null)
   );
 }
