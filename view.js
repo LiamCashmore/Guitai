@@ -13,6 +13,7 @@ import {
   rootOptions,
   groupsFor,
   MAJOR_SCALE,
+  handReach,
   INSTRUMENTS,
   DEFAULT_INSTRUMENT,
   setInstrument,
@@ -568,6 +569,11 @@ function renderNotes(grid, mode) {
 
     if (isNew) {
       requestAnimationFrame(() => {
+        // It can have been retired again before this frame arrived — two
+        // changes inside one frame will do it, and holding an arrow key
+        // is two changes inside one frame. Fading it in now would leave a
+        // note on the board that nothing owns and nothing will move.
+        if (liveNotes.get(key) !== rec) return;
         rec.group.style.transition = "";
         rec.group.style.opacity = "1";
       });
@@ -1323,8 +1329,74 @@ function effectiveVoicing(root, type, voicing) {
     fingerable: !!grip,
     order: notes.map(n => n.degree).join("-"),
     bass: full[lowest.string][lowest.fret].degree,
+    // The names belonged to the grip as it was searched for. Once notes
+    // have been moved by hand they describe something that is no longer
+    // on the board, so they go rather than mislead — the label says
+    // "edited" in their place.
+    shape: null, grip: null, omits: [],
+    reach: handReach(cells),
     edited: true,
   };
+}
+
+/**
+ * Where to open the window when the chord under it changes.
+ *
+ * At the hand's last position if a grip lives there, and otherwise at the
+ * nearest stretch of neck that holds one. Dragging the window is left
+ * alone: putting the hand somewhere a chord cannot be played is a fair
+ * thing to ask, and it is answered by saying so. But arriving somewhere
+ * empty without having asked is just a blank board.
+ *
+ * This matters far more on a bass than on a guitar. A guitar plays most
+ * chords almost anywhere; a bass has no C at all below the eighth fret,
+ * so a window left where the scale was would frequently hold nothing.
+ */
+function seekWindow(voicings, type, anchor) {
+  const last = Math.max(0, numFrets - WINDOW_WIDTH + 1);
+  const want = Math.max(0, Math.min(last, anchor));
+  if (!voicings.length) return want;
+
+  const within = lo => {
+    const hi = lo + WINDOW_WIDTH - 1;
+    return voicings.filter(v => v.cells.every(c =>
+      (openOn && c.fret === 0) || (c.fret >= lo && c.fret <= hi)));
+  };
+  if (within(want).length) return want;
+
+  // The hand has to move, so it may as well move somewhere worth being.
+  // Nearest is the wrong question once staying put is impossible: it
+  // lands on whatever scrap of a chord happens to be closest, which on a
+  // bass is usually an inversion nobody asked for. So each stretch of
+  // neck is judged by the best grip in it, with distance only breaking
+  // ties between places that are otherwise as good as each other.
+  let best = want, bestCost = Infinity;
+  for (let lo = 0; lo <= last; lo++) {
+    const here = within(lo);
+    if (!here.length) continue;
+    const top = rankVoicings(here, type, { limit: 1 })[0];
+    const cost = top.ease + Math.abs(lo - want) * 0.35;
+    if (cost < bestCost) { bestCost = cost; best = lo; }
+  }
+  return best;
+}
+
+/**
+ * What to call the grip on screen.
+ *
+ * A guitar names it after the CAGED shape it is; a bass names it after
+ * the interval it spans, because that is what a bass player calls it —
+ * a tenth, a shell, a fifth. And where the grip cannot carry a tone the
+ * chord is named for, it says so: nearly every bass voicing leaves
+ * something out, and a Cm7b5 that is really sounding C, Eb and Bb should
+ * admit it rather than let the player believe the flat fifth is there.
+ */
+function gripName(voicing) {
+  const named = voicing.shape ? ` · ${voicing.shape} shape`
+              : voicing.grip  ? ` · ${voicing.grip}`
+              : "";
+  const omits = voicing.omits?.length ? ` · omits ${voicing.omits.join(", ")}` : "";
+  return named + omits;
 }
 
 /**
@@ -1527,7 +1599,7 @@ function render({ animate = true } = {}) {
         // The numeral says what the chord is doing, the symbol says what
         // to call it, and the rest is what the hand has to do — which is
         // the whole reason these particular grips were chosen.
-        const shape = voicing.shape ? ` · ${voicing.shape} shape` : "";
+        const shape = gripName(voicing);
         const hand = voicing.barre ? " · barre"
           : voicing.cells.some(c => c.fret === 0) ? " · open" : "";
         posLabel.textContent =
@@ -1543,15 +1615,19 @@ function render({ animate = true } = {}) {
   }
 
   if (isChordMode()) {
-    // Coming from a scale, the window opens where the hand was left.
+    // Full grips: every string sounds and notes may double, which is what
+    // the open and barre shapes a guitarist actually plays are made of.
+    // On a bass this is the bass search instead — a different set of
+    // rules producing the same kind of answer.
+    const all = voicingsFor(root, type, openOn);
+    // Coming from a scale, the window opens where the hand was left — or
+    // at the nearest stretch of neck that can actually hold the chord.
     if (seekAnchor) {
-      winLo = Math.max(0, Math.min(numFrets - WINDOW_WIDTH + 1, anchorFret));
+      winLo = seekWindow(all, type, anchorFret);
       seekAnchor = false;
     }
     const winHi = winLo + WINDOW_WIDTH - 1;
-    // Full grips: every string sounds and notes may double, which is what
-    // the open and barre shapes a guitarist actually plays are made of.
-    let voicings = voicingsFor(root, type, openOn);
+    let voicings = all;
     // Keep only grips that fall inside the chosen stretch. With OPEN off,
     // an open string counts as fret 0 and so has to be inside it too —
     // the open shapes appear when the window reaches the nut and not
@@ -1626,7 +1702,7 @@ function render({ animate = true } = {}) {
         // just made the line long enough to stop being read. What is left
         // is what the board can't say: which of the shapes this is, and
         // what the hand has to do to hold it.
-        const shape = voicing.shape ? ` · ${voicing.shape} shape` : "";
+        const shape = gripName(voicing);
         const hand = voicing.barre ? " · barre"
           : voicing.cells.some(c => c.fret === 0) ? " · open" : "";
         // An edit can ask for a hand nobody has. Still shown, still played

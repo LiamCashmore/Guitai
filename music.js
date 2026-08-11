@@ -403,6 +403,15 @@ export const INSTRUMENTS = {
     numFrets: 17,
     caged: true,
     kinds: ["scale", "arpeggio", "chord", "progression"],
+    chords: {
+      strategy: "guitar",
+      scaleLength: 25.5,
+      // The guitar's grips are governed by the fret counts below, tuned
+      // by hand, so no physical cap binds here. The bass entry says why
+      // one is needed there.
+      reach: { comfort: Infinity, max: Infinity },
+      openReach: 5,
+    },
   },
   bass: {
     id: "bass",
@@ -412,7 +421,21 @@ export const INSTRUMENTS = {
     openMidi: [28, 33, 38, 43],
     numFrets: 17,
     caged: false,
-    kinds: ["scale", "arpeggio"],
+    kinds: ["scale", "arpeggio", "chord", "progression"],
+    chords: {
+      strategy: "bass",
+      // A bass neck is a third longer than a guitar's, so the same fret
+      // count is a different stretch: frets 1-5 span five inches on a
+      // guitar and six and a half on a bass. Counting frets calls those
+      // the same grip. Counting inches does not, which is why the bass
+      // caps its reach physically and the guitar need not.
+      scaleLength: 34,
+      reach: { comfort: 4.0, max: 5.3 },
+      // An open string costs no finger, and a bass grip holds one or two
+      // stopped notes at most, so a ringing open string does not tie the
+      // hand to the nut the way it does under a six-string chord.
+      openReach: 12,
+    },
   },
 };
 
@@ -794,7 +817,7 @@ function candidatesAcrossNeck(root, type, perRegion = 2) {
   const grounded = all.filter(v => {
     const stopped = v.cells.filter(c => c.fret > 0).map(c => c.fret);
     if (!v.cells.some(c => c.fret === 0) || !stopped.length) return true;
-    return Math.max(...stopped) <= CHORD_OPEN;
+    return Math.max(...stopped) <= instrument.chords.openReach;
   });
 
   // Bucketed by the fret the grip starts on, not by a wider stretch of
@@ -937,7 +960,6 @@ export function progressionVoicings(key, name, { ease = 1, window = null } = {})
 // than treated as equal.
 const CHORD_COMFORT = 4;
 const CHORD_SPAN    = 5;
-const CHORD_OPEN    = 5;   // an open string belongs near the nut
 const CHORD_OPEN_SPAN = 3; // ...and keeps the grip around it tight
 const CHORD_FINGERS = 4;
 
@@ -1324,9 +1346,15 @@ function voicingEase(voicing, degrees) {
  */
 export function rankVoicings(list, type, { limit = 4 } = {}) {
   const degrees = getScaleDegrees(type);
+  const onBass  = instrument.chords.strategy === "bass";
   const scored = list.map(v => {
-    const { score, shape } = voicingEase(v, degrees);
-    return { ...v, ease: score, shape };
+    const { score, shape, grip, omits } = onBass
+      ? bassVoicingEase(v, degrees, type)
+      : voicingEase(v, degrees);
+    return {
+      ...v, ease: score,
+      shape: shape ?? null, grip: grip ?? null, omits: omits ?? [],
+    };
   }).sort((a, b) => a.ease - b.ease);
 
   // A grip that is another grip with strings taken away is not a second
@@ -1517,6 +1545,12 @@ export function hasOpenVoicing(root, type) {
  * @returns {Array<{cells, notes, lo, hi, strings, order, label}>}
  */
 export function chordVoicings(root, type, { stacked = true, openAnywhere = false } = {}) {
+  // A bass has one way of voicing a chord, not two. The guitar's split
+  // between a stacked shape and a full strummed grip is about doubling
+  // across six strings, and there is no doubling to be had on four.
+  if (instrument.chords.strategy === "bass") {
+    return bassVoicings(root, type, { openAnywhere });
+  }
   if (!stacked) return fullVoicings(root, type, { openAnywhere });
   const grid = buildScaleGrid(root, type);
 
@@ -1592,7 +1626,7 @@ export function chordVoicings(root, type, { stacked = true, openAnywhere = false
           ? Math.max(...stopped) - Math.min(...stopped) + 1 : 0;
         if (span > CHORD_SPAN) return;
         if (cells.some(c => c.fret === 0) &&
-            stopped.length && Math.max(...stopped) > CHORD_OPEN) return;
+            stopped.length && Math.max(...stopped) > instrument.chords.openReach) return;
 
         const frets = cells.map(c => c.fret);
         const key = cells.map(c => `${c.string}:${c.fret}`).join("|");
@@ -1620,6 +1654,440 @@ export function chordVoicings(root, type, { stacked = true, openAnywhere = false
     a.lo - b.lo ||
     (a.bass === "1" ? 0 : 1) - (b.bass === "1" ? 0 : 1) ||
     a.span - b.span || a.strings[0] - b.strings[0]);
+}
+
+// ============================================================
+// BASS CHORDS
+//
+// A bass is not a small guitar, and its chords are not guitar chords
+// with two strings missing. Three things are different, and all three
+// are arithmetic rather than taste.
+//
+// 1. THE LOW INTERVAL LIMIT. Two pitches close together low down fall
+//    inside one filter in the ear and beat against each other instead of
+//    blending. How close is too close depends on how low you are, and
+//    the limits below are the ones arrangers have used for a century: a
+//    minor third is clear at C3 and mud at E1; a fifth holds up down to
+//    Bb1; below that only the octave survives. This is why the signature
+//    bass chord is the TENTH — the third lifted an octave, out of the
+//    range where it fights the root — and not the close triad a guitar
+//    plays. Everything else here follows from this one rule.
+//
+// 2. THE NECK IS LONGER. A 34" scale puts the frets a third further
+//    apart than a 25.5" one, so a four-fret grip at the first fret is a
+//    five inch stretch on a bass against under four on a guitar. Fret
+//    counts cannot express that; inches can, and the spacing is
+//    computable — each fret sits one twelfth-root-of-two of the
+//    remaining string closer to the bridge. Reassuringly, those same
+//    inch caps applied to a guitar reproduce the four-and-five-fret
+//    rules that were tuned by hand up there, which is a reason to trust
+//    them down here.
+//
+// 3. THE ROOT IS THE JOB. A guitarist may drop the root from a crowded
+//    chord because the bass player has it. The bass player has nobody
+//    underneath, so the root stays, and whatever falls lowest genuinely
+//    re-names the chord for the whole ensemble. Rootless voicings are
+//    not offered; inversions are, ranked well below root position.
+//
+// What survives those three is small on purpose. A four-string bass
+// voicing a seventh chord has room for the root, the third and the
+// seventh — which is the shell a bass player actually plays.
+// ============================================================
+
+// The lowest pitch at which an interval still reads as harmony rather
+// than as beating, in MIDI note numbers. Read as: a minor third (3
+// semitones) is only clear from C3 (48) upward.
+const LOW_INTERVAL_LIMITS = [
+  { semitones: 1,  from: 52 },   // E3
+  { semitones: 2,  from: 51 },   // Eb3
+  { semitones: 3,  from: 48 },   // C3
+  { semitones: 4,  from: 46 },   // Bb2
+  { semitones: 5,  from: 41 },   // F2
+  { semitones: 6,  from: 39 },   // Eb2
+  { semitones: 7,  from: 34 },   // Bb1
+  { semitones: 12, from: 0  },   // lower than that, the octave alone
+];
+
+/**
+ * The smallest interval that stays clear above a given pitch.
+ *
+ * Monotone by construction: the lower the note, the wider its neighbour
+ * has to be. A pair of pitches is clear when the gap between them is at
+ * least this, measured up from the LOWER of the two.
+ *
+ * @param {number} midi  the lower pitch
+ * @returns {number} semitones
+ */
+export function minIntervalAt(midi) {
+  for (const { semitones, from } of LOW_INTERVAL_LIMITS) {
+    if (midi >= from) return semitones;
+  }
+  return 12;
+}
+
+/** How much room to spare a pair of pitches has, in semitones. */
+function clarityMargin(lo, hi) {
+  return (hi - lo) - minIntervalAt(lo);
+}
+
+/**
+ * Distance from the nut to a fret, in inches.
+ *
+ * Each fret sits one twelfth-root-of-two of the remaining string closer
+ * to the bridge, so the spacing shrinks geometrically and a grip that is
+ * a stretch at the first fret is comfortable at the twelfth.
+ */
+function nutDistance(scaleLength, fret) {
+  return scaleLength * (1 - Math.pow(2, -fret / 12));
+}
+
+/** How far apart the fingers must sit to hold a grip, in inches. */
+export function handReach(cells) {
+  const frets = cells.map(c => c.fret).filter(f => f > 0);
+  if (frets.length < 2) return 0;
+  const L = instrument.chords.scaleLength;
+  return nutDistance(L, Math.max(...frets)) - nutDistance(L, Math.min(...frets));
+}
+
+/**
+ * What a bass chord cannot do without: the root, because nothing is
+ * underneath it to supply one, and the tone that says major or minor.
+ *
+ * Everything else — the fifth, the seventh, the extensions — is colour
+ * the grip takes when it has room, and is scored rather than demanded.
+ * That is not a compromise. A bass chord IS a shell, and asking a
+ * four-string instrument for all seven notes of a thirteenth returns
+ * nothing at all.
+ */
+function bassCore(degrees, { strict = true } = {}) {
+  const has = d => degrees.includes(d);
+  const core = new Set(["1"]);
+  const quality = ["3", "b3", "4", "2"].find(has);
+  if (quality) core.add(quality);
+
+  // A bent fifth on a chord with no seventh is not colour, it is the
+  // name of the chord: diminished and augmented differ from minor and
+  // major in nothing else, so a grip that drops it is not a thin version
+  // of the chord but a different chord, and offering C-Eb as a C
+  // diminished would be a lie.
+  //
+  // Add a seventh and it changes hands. On a 7b5 the flat fifth is a
+  // tension, and tensions belong to whoever is playing the upper
+  // structure; what the bass owes the chord is the shell — root, third,
+  // seventh — and a bassist comping an altered dominant plays exactly
+  // that and lets the piano colour it. So the seventh stays and the
+  // alteration becomes something to fit in if the neck allows.
+  const bent = ["b5", "#5"].find(has);
+  const seventh = ["7", "b7", "bb7", "6"].some(has);
+  if (strict && bent && !seventh) core.add(bent);
+
+  // Nothing but a fifth to work with — a power chord. Then the fifth is
+  // the only thing carrying the sound, so it has to be there.
+  if (core.size < 2) {
+    const fifth = ["5", "b5", "#5"].find(has);
+    if (fifth) core.add(fifth);
+  }
+  return core;
+}
+
+/**
+ * The tones that make a chord more than a triad, and what each is worth
+ * when the grip can carry it.
+ *
+ * A seventh turns a triad into a seventh chord and an alteration is the
+ * whole reason an altered chord is named what it is, so those count
+ * heavily. The fifth carries almost nothing and counts for little —
+ * which is exactly why it is the first thing a bass player leaves out.
+ */
+function bassColour(degrees, type) {
+  const has = d => degrees.includes(d);
+  const worth = new Map();
+  // The seventh is what the bass is for. Between a grip that keeps it and
+  // one that keeps an alteration instead, the first is the one that
+  // sounds like the chord, so this outweighs everything below it.
+  for (const d of ["7", "b7", "bb7", "6"]) if (has(d)) worth.set(d, 3.0);
+  // An alteration is next: it is the reason the chord is named what it
+  // is, and worth more than the extension the chord is numbered for.
+  for (const d of degrees) {
+    if (/^[#b]/.test(d) && !["b3", "b7", "bb7"].includes(d)) worth.set(d, 2.2);
+  }
+  const named = ["13", "11", "9"].find(has);
+  if (named) worth.set(named, 1.2);
+  if (has("5")) worth.set("5", 0.3);
+  return worth;
+}
+
+/** Every ascending run of strings, gaps allowed, of a workable size. */
+function stringSubsets(count, min, max) {
+  const out = [];
+  const build = (start, picked) => {
+    if (picked.length >= min) out.push([...picked]);
+    if (picked.length === max) return;
+    for (let s = start; s < count; s++) { picked.push(s); build(s + 1, picked); picked.pop(); }
+  };
+  build(0, []);
+  return out;
+}
+
+// The shapes a bass player would name, as semitones between neighbouring
+// notes. Naming them by interval rather than by chord is what makes them
+// shapes: a tenth is a tenth whether the chord is major or minor.
+const BASS_GRIPS = [
+  { name: "tenth",        gaps: [15]    }, { name: "tenth",   gaps: [16]    },
+  { name: "fifth",        gaps: [7]     }, { name: "octave",  gaps: [12]    },
+  { name: "seventh",      gaps: [10]    }, { name: "seventh", gaps: [11]    },
+  { name: "shell",        gaps: [10, 5] }, { name: "shell",   gaps: [11, 4] },
+  { name: "shell",        gaps: [10, 6] }, { name: "shell",   gaps: [11, 5] },
+  { name: "shell",        gaps: [ 7, 8] }, { name: "shell",   gaps: [ 7, 7] },
+  { name: "spread triad", gaps: [ 8, 7] }, { name: "spread triad", gaps: [9, 7] },
+  { name: "third",        gaps: [ 3]    }, { name: "third",   gaps: [ 4]    },
+  { name: "sixth",        gaps: [ 8]    }, { name: "sixth",   gaps: [ 9]    },
+  { name: "fourth",       gaps: [ 5]    },
+];
+
+/**
+ * The chord tones a grip leaves out and ought to admit to.
+ *
+ * Nearly every bass voicing omits something, so listing all of it would
+ * be noise — nobody notes a missing fifth, because the fifth is always
+ * the first thing to go. What is worth saying is a missing seventh or a
+ * missing alteration, because without those the grip is not really the
+ * chord it is labelled with, and the player should know that before they
+ * decide it is close enough.
+ */
+function bassOmissions(voicing, degrees, type) {
+  const sounded = new Set(voicing.notes.map(n => n.degree));
+  const out = [];
+  for (const [degree, worth] of bassColour(degrees, type)) {
+    if (worth >= 1.0 && !sounded.has(degree)) out.push(degree);
+  }
+  return out;
+}
+
+/** The name a player would give this grip, where it has one. */
+function bassGripName(voicing) {
+  const pitches = voicing.cells.map(pitchAt);
+  const gaps = pitches.slice(1).map((p, i) => p - pitches[i]);
+  const match = BASS_GRIPS.find(g =>
+    g.gaps.length === gaps.length && g.gaps.every((v, i) => v === gaps[i]));
+  if (match) return match.name;
+  // Unnamed, but worth saying when the third is up where it belongs.
+  const third = voicing.notes.findIndex(n => n.degree === "3" || n.degree === "b3");
+  if (third > 0 && pitches[third] - pitches[0] >= 12) return "spread";
+  return null;
+}
+
+/**
+ * Every bass voicing of a chord.
+ *
+ * Two to four notes on any ascending run of strings — gaps included,
+ * because a tenth needs one: the root on the E string and the third on
+ * the G string leaves the two in between silent, and that grip is most
+ * of the bass chord vocabulary.
+ *
+ * Nothing is doubled. On four strings a doubled note is a quarter of the
+ * chord spent saying something already said, and down here it is also a
+ * second voice inside the same critical band as the first.
+ */
+function bassVoicings(root, type, { openAnywhere = false } = {}) {
+  const strict = bassSearch(root, type, bassCore(getScaleDegrees(type)), openAnywhere);
+  if (strict.length) return strict;
+  // The altered fifth could not be reached anywhere on this neck. Rather
+  // than show an empty board, take the chord without it — the omission
+  // is carried on every grip and said out loud in the label.
+  return bassSearch(root, type,
+    bassCore(getScaleDegrees(type), { strict: false }), openAnywhere);
+}
+
+function bassSearch(root, type, core, openAnywhere) {
+  const grid    = buildScaleGrid(root, type);
+  const { reach, openReach } = instrument.chords;
+
+  // Where each string can put a chord tone at all.
+  const options = [];
+  for (let s = 0; s < numStrings; s++) {
+    const frets = [];
+    for (let f = 0; f <= numFrets; f++) if (grid[s][f]) frets.push(f);
+    options.push(frets);
+  }
+
+  const out = [];
+  const seen = new Set();
+
+  for (const strings of stringSubsets(numStrings, 2, Math.min(4, numStrings))) {
+    if (strings.some(s => options[s].length === 0)) continue;
+    const chosen = [];
+
+    (function choose(i) {
+      if (i === strings.length) {
+        const cells   = strings.map((string, k) => ({ string, fret: chosen[k] }));
+        const pitches = cells.map(pitchAt);
+
+        // Voices may not cross. A voicing that descends as it crosses the
+        // strings is one already counted on a different run.
+        for (let k = 1; k < pitches.length; k++) if (pitches[k] <= pitches[k - 1]) return;
+
+        const notes   = cells.map(c => grid[c.string][c.fret]);
+        const sounded = new Set(notes.map(n => n.degree));
+        if (sounded.size !== notes.length) return;         // nothing doubled
+        for (const d of core) if (!sounded.has(d)) return;
+
+        // THE LOW INTERVAL LIMIT — the rule the whole model turns on.
+        // Only neighbouring pairs are checked, because it is neighbours
+        // that beat; the outer notes of a wide voicing were never at risk.
+        for (let k = 1; k < pitches.length; k++) {
+          if (clarityMargin(pitches[k - 1], pitches[k]) < 0) return;
+        }
+
+        const stopped = cells.map(c => c.fret).filter(f => f > 0);
+        if (stopped.length === 0) return;                  // all open is not a grip
+        const lo = Math.min(...stopped), hi = Math.max(...stopped);
+        if (hi - lo + 1 > CHORD_SPAN) return;
+        const inches = handReach(cells);
+        if (inches > reach.max) return;                    // no hand is that wide
+
+        // An open string rings wherever the hand is, but a grip mixing
+        // the nut with the top of the neck is not one anybody plays.
+        if (cells.some(c => c.fret === 0) && !openAnywhere && hi > openReach) return;
+
+        const grip = gripFingering(cells);
+        if (!grip) return;
+
+        const key = cells.map(c => `${c.string}:${c.fret}`).join("|");
+        if (seen.has(key)) return;
+        seen.add(key);
+
+        const bass = notes[0].degree;    // pitch ascends, so this is the lowest
+        out.push({
+          cells, notes, strings,
+          span: hi - lo + 1,
+          reach: inches,
+          stretch: inches > reach.comfort,
+          lo, hi,
+          fingers: grip.fingers,
+          barre: grip.barre,
+          barres: grip.barres,
+          order: notes.map(n => n.degree).join("-"),
+          bass,
+          label: INVERSION[bass] ?? "inversion",
+        });
+        return;
+      }
+      // Pruned as it descends rather than at the leaf. Both tests that
+      // matter — voices rising, and each new pair clearing the interval
+      // limit — depend only on the note just placed and the one before
+      // it, so a branch that fails either can never recover further
+      // down, and cutting it there is what keeps a dense chord's search
+      // from running into six figures.
+      const prev = i > 0
+        ? openMidi[strings[i - 1]] + chosen[i - 1]
+        : null;
+      for (const f of options[strings[i]]) {
+        if (prev !== null) {
+          const here = openMidi[strings[i]] + f;
+          if (here <= prev) continue;
+          if (clarityMargin(prev, here) < 0) continue;
+        }
+        chosen[i] = f;
+        choose(i + 1);
+      }
+    })(0);
+  }
+
+  return out.sort((a, b) =>
+    a.lo - b.lo ||
+    (a.bass === "1" ? 0 : 1) - (b.bass === "1" ? 0 : 1) ||
+    b.cells.length - a.cells.length ||
+    a.reach - b.reach);
+}
+
+/**
+ * How good a bass voicing is, as a number — lower is better.
+ *
+ * The ordering this produces is the one a bass teacher gives: the root
+ * and its tenth first, then the shell with the seventh inside it, then
+ * the bare fifths, and the close triads last and only high up the neck,
+ * where they finally stop growling.
+ */
+function bassVoicingEase(voicing, degrees, type) {
+  const { cells, notes, strings } = voicing;
+  const pitches = cells.map(pitchAt);
+  let score = 0;
+
+  // How much room to spare the tightest pair has: the difference between
+  // a chord and a rumble, so it leads.
+  //
+  // It saturates quickly, and that matters more than the weight. Clear is
+  // clear — three semitones above the limit sounds no muddier than nine —
+  // and an uncapped reward would send every answer to the top of the neck
+  // chasing margin the ear cannot hear.
+  let worst = Infinity;
+  for (let k = 1; k < pitches.length; k++) {
+    worst = Math.min(worst, clarityMargin(pitches[k - 1], pitches[k]));
+  }
+  score -= Math.min(worst, 3) * 0.9;
+
+  // Nothing here penalises the low register directly. It would be double
+  // counting: the interval limit above already forbids exactly those
+  // voicings the bottom of the instrument cannot carry, and a wide one
+  // down there — an open E under its tenth — is a real and good sound.
+
+  // The root underneath. On a guitar an inversion is a colour; on a bass
+  // it re-names the chord for everyone listening, so root position leads
+  // by a wide margin and the inversions wait behind it.
+  if (voicing.bass !== "1") score += 4;
+
+  // Three notes is a bass chord. Two is the everyday one; four is
+  // possible, and crowds an instrument with four strings and no spare
+  // register to put them in.
+  score += ({ 2: -0.6, 3: -1.2, 4: 0.6 }[cells.length] ?? 2);
+
+  // The colour it manages to carry: the seventh above all, then the
+  // alterations, then whatever the chord is named for.
+  const sounded = new Set(notes.map(n => n.degree));
+  for (const [degree, worth] of bassColour(degrees, type)) {
+    if (!sounded.has(degree)) score += worth;
+  }
+
+  // An extension has to be on top. Underneath the third or the seventh
+  // it is not colouring the chord, it is arguing with it.
+  cells.forEach((c, i) => {
+    if (EXTENSIONS.has(notes[i].degree) && i < cells.length - 1) score += 1.6;
+  });
+
+  // The hand, measured in inches rather than frets, because the same
+  // grip is a stretch at the first fret and easy at the twelfth.
+  score += voicing.reach * 0.7;
+  if (voicing.stretch) score += 2.5;
+  score += voicing.fingers * 0.7;
+
+  // Where the hand is. A bassist lives in the lower half of the neck, and
+  // past the twelfth fret is thumb position: the frets are tiny, the neck
+  // is meeting the body, and the strings have lost the length that made
+  // them sound like a bass. So the same grip is worth less the further up
+  // it is asked for, and this is what settles the many places one
+  // interval can be played in favour of the one people use.
+  score += voicing.lo * 0.09;
+  score += Math.max(0, voicing.lo - 12) * 0.35;
+
+  // Bass strings are thick, stiff and high off the board. A barre a
+  // guitarist would not think twice about is real work down here.
+  score += (voicing.barres?.length ?? 0) * 4;
+
+  // An open string is a free finger and the fullest tone the instrument
+  // has, which is why so much bass writing sits in the open keys.
+  score -= Math.min(cells.filter(c => c.fret === 0).length, 2) * 0.8;
+
+  // Skipping a string is ordinary — it is how a tenth is reached — but
+  // the plucking hand still has to clear whatever is left silent, and
+  // two in a row is harder than one.
+  score += (strings.at(-1) - strings[0] + 1 - strings.length) * 0.5;
+
+  return {
+    score,
+    grip: bassGripName(voicing),
+    omits: bassOmissions(voicing, degrees, type),
+  };
 }
 
 // ============================================================
