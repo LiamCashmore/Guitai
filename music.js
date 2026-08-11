@@ -437,6 +437,32 @@ export const INSTRUMENTS = {
       openReach: 12,
     },
   },
+
+  mandolin: {
+    id: "mandolin",
+    name: "Mandolin",
+    // G3 D4 A4 E5 — tuned in fifths, like a violin, and the reason its
+    // shapes look nothing like a guitar's. See stringIntervals() below.
+    openMidi: [55, 62, 69, 76],
+    numFrets: 17,
+    // Each note is sounded by two strings tuned together. They are one
+    // note to every calculation in this file — the pair exists for volume
+    // and for the shimmer of two strings never quite in tune — so only
+    // the drawing knows about it.
+    courses: 2,
+    caged: false,
+    kinds: ["scale", "arpeggio"],
+    chords: {
+      // Not offered yet, so nothing reads this but the fields the shared
+      // code touches. Guitar grip rules would not transfer anyway: they
+      // assume fourths, and a mandolin's fifths put a chord's notes in
+      // completely different places.
+      strategy: "guitar",
+      scaleLength: 13.875,
+      reach: { comfort: Infinity, max: Infinity },
+      openReach: 5,
+    },
+  },
 };
 
 export const DEFAULT_INSTRUMENT = "guitar";
@@ -451,6 +477,44 @@ export let tuning       = openMidi.map(m => FLAT_NAMES[midiToPc(m)]);   // low -
 // Chromatic grid: every pitch class at every fret of every string.
 export let chromaticGrid = openMidi.map(m => getFretPcs(midiToPc(m), numFrets));
 export let numStrings    = chromaticGrid.length;
+
+/**
+ * The interval between each pair of neighbouring strings, in semitones.
+ *
+ * This is the single most consequential fact about a tuning, and almost
+ * everything below is derived from it: a guitar and a bass are in
+ * fourths, a mandolin in fifths, and that difference is why the same
+ * scale makes a different shape on each.
+ */
+export function stringIntervals() {
+  return openMidi.slice(1).map((m, i) => m - openMidi[i]);
+}
+
+/**
+ * How wide a hand position has to be.
+ *
+ * Not a fact about hands — a fact about the tuning. A string covering
+ * frets lo to lo+span-1 reaches the pitch its neighbour starts on only
+ * when span is at least the interval between them; anything narrower
+ * leaves a band of pitches that exists on neither string, and scale
+ * notes fall into that band and vanish. So the window is exactly the
+ * widest gap between neighbouring strings: five for a guitar or bass in
+ * fourths, seven for a mandolin in fifths.
+ *
+ * The hand copes because the fret spacing scales with the instrument. A
+ * seven-fret stretch at the bottom of a 13.9" mandolin neck is 3.8
+ * inches, which is what a four-fret stretch costs on a guitar — so the
+ * wider window the tuning demands is the easier reach the small scale
+ * length gives back.
+ */
+export function positionSpan() {
+  return Math.max(...stringIntervals());
+}
+
+/** One finger per fret: the tightest hand that still covers the scale. */
+export function tightSpan() {
+  return positionSpan() - 1;
+}
 
 /**
  * Point the model at another instrument. Everything above is recomputed
@@ -643,13 +707,13 @@ export function getShapeGrid(root, type, box) {
 // five-fret reach, then to four notes per string.
 // ============================================================
 
-// A five-fret box is the natural unit here. Adjacent strings are five
-// semitones apart, so a five-fret window covers every pitch in its range
-// with no blind spot between strings — which makes a missing scale note
-// impossible. Four-fret windows leave a one-semitone hole between each
-// pair of strings, and that hole is where notes used to disappear.
-const TIGHT_SPAN    = 4;   // one finger per fret — the tightest hand
-const POSITION_SPAN = 5;   // index anchors the low note, pinky stretches one
+// The box widths come from the tuning rather than from a number chosen
+// here — see positionSpan() up in the fretboard model for why the widest
+// interval between neighbouring strings is exactly the width that makes
+// a missing scale note impossible. On a guitar or a bass that comes out
+// as the five and four these constants used to be; on a mandolin it
+// comes out as seven and six, which is the same reach on a neck half
+// the length.
 
 /** Describe one box: note count, spread, and whether the run has holes. */
 function inspectBox(grid, pcs, lo, hi) {
@@ -729,8 +793,9 @@ export function generalPositions(root, type) {
 
   const boxes = [];
   const seen = new Set();
-  for (let lo = 0; lo <= numFrets - TIGHT_SPAN + 1; lo++) {
-    for (const span of [TIGHT_SPAN, POSITION_SPAN]) {
+  const tight = tightSpan(), full = positionSpan();
+  for (let lo = 0; lo <= numFrets - tight + 1; lo++) {
+    for (const span of [tight, full]) {
       const hi = lo + span - 1;
       if (hi > numFrets) continue;
       const info = inspectBox(grid, pcs, lo, hi);
@@ -2112,10 +2177,26 @@ function bassVoicingEase(voicing, degrees, type) {
 // them rare without ever ruling them out.
 // The charge is levied per note past the fourth, so it mounts steeply
 // and a fifth note only appears where the arithmetic demands one.
-const PATH_COMFORT_PER_STRING = 4;
+/**
+ * How many notes a string carries before the run is crowding it.
+ *
+ * A string's share of a scale is whatever falls between it and its
+ * neighbour, and a diatonic scale puts seven notes in every twelve
+ * semitones — so an interval of n semitones holds about 7n/12 of them,
+ * plus the note at each end. Fourths give four, which is the comfortable
+ * maximum every method book quotes; a mandolin's fifths give five, which
+ * is right, because a fifth simply holds more scale than a fourth does.
+ */
+function pathComfortPerString() {
+  return Math.round(positionSpan() * 7 / 12) + 1;
+}
 const PATH_CROWD_PENALTY      = 4;
-const PATH_HAND           = 4;   // frets the fingers cover without moving
-const PATH_MAX_WINDOW     = 6;   // widest stretch worth trying before moving
+// The hand covers a position without moving, and will stretch one fret
+// past it before giving up and shifting. Both come from the tuning, the
+// same way the position boxes do: four and six on a guitar or bass, six
+// and eight on a mandolin.
+const pathHand      = () => tightSpan();
+const pathMaxWindow = () => positionSpan() + 1;
 const PATH_MAX_STEP       = 6;   // furthest one leap along a string may reach
 const PATH_SHIFT_PENALTY  = 1;   // fixed cost of breaking position at all
 const PATH_SKIP_PENALTY   = 3;   // discourages hopping over a string
@@ -2146,7 +2227,7 @@ export function findPath(root, type, from, to, only = null) {
   // neck, try to keep the entire run inside a single hand position —
   // narrowest first, and lowest among equals. Only when no such window
   // can hold the run does the search open up and allow the hand to move.
-  for (let width = PATH_HAND; width <= PATH_MAX_WINDOW; width++) {
+  for (let width = pathHand(); width <= pathMaxWindow(); width++) {
     for (let lo = 0; lo + width - 1 <= numFrets; lo++) {
       const hi = lo + width - 1;
       const holds = c => c.fret === 0 ? lo === 0 : (c.fret >= lo && c.fret <= hi);
@@ -2239,25 +2320,26 @@ function searchPath(root, type, from, to, only, window) {
   const sameStringOnly = stringDir === 0;
   // A run held to one string on purpose is a horizontal run; crowding
   // isn't a fault there, so it goes unpenalised.
-  const crowdingFrom = sameStringOnly ? Infinity : PATH_COMFORT_PER_STRING;
+  const crowdingFrom = sameStringOnly ? Infinity : pathComfortPerString();
 
-  // The hand covers PATH_HAND frets from `anchor`. Reaching a note inside
+  // The hand covers pathHand() frets from `anchor`. Reaching a note inside
   // that window is free wherever it sits; reaching outside means moving
   // the whole hand, and the cost is how far it travels. Open strings need
   // no finger, so they are always free and leave the hand where it is.
+  const HAND = pathHand();
   const reach = (anchor, fret) => {
     // Anything under the hand is free, open strings included — which is
     // what makes the open position, hand at the nut, come out free.
-    if (fret >= anchor && fret <= anchor + PATH_HAND - 1) return { anchor, cost: 0 };
+    if (fret >= anchor && fret <= anchor + HAND - 1) return { anchor, cost: 0 };
     // An open string needs no finger, so the hand never moves for one.
     // It still counts against a run whose hand is elsewhere, since
     // dropping to the nut mid-phrase is leaving the position.
     if (fret === 0) return { anchor, cost: PATH_OPEN_PENALTY };
-    const moved = fret < anchor ? fret : fret - (PATH_HAND - 1);
+    const moved = fret < anchor ? fret : fret - (HAND - 1);
     return { anchor: moved, cost: PATH_SHIFT_PENALTY + Math.abs(moved - anchor) };
   };
 
-  const maxAnchor = Math.max(0, numFrets - PATH_HAND + 1);
+  const maxAnchor = Math.max(0, numFrets - HAND + 1);
   const stateKey = st => `${st.string}|${st.anchor}|${st.run}`;
 
   // The starting note doesn't fix the hand: the same fret can be played
@@ -2265,7 +2347,7 @@ function searchPath(root, type, from, to, only, window) {
   // is a legitimate way to begin, so the search weighs them all.
   let layer = new Map();
   for (let anchor = 0; anchor <= maxAnchor; anchor++) {
-    if (from.fret !== 0 && (from.fret < anchor || from.fret > anchor + PATH_HAND - 1)) continue;
+    if (from.fret !== 0 && (from.fret < anchor || from.fret > anchor + HAND - 1)) continue;
     const st = { cost: 0, prev: null, string: from.string, fret: from.fret, run: 1, anchor };
     layer.set(stateKey(st), st);
   }

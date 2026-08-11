@@ -348,17 +348,27 @@ function drawBoard() {
     }
   }
 
-  // Strings (thicker toward the low E at the bottom)
+  // Strings, thicker toward the low one at the bottom.
+  //
+  // A mandolin sounds each note with two strings tuned together, so each
+  // line is drawn as the pair it is. They are one note to everything
+  // else — the model has no idea they exist — and drawing them apart
+  // here is the whole of the difference: the marker still sits on the
+  // course's centre, because that is where the note is.
+  const perCourse = instrument.courses ?? 1;
   chromaticGrid.forEach((_, i) => {
     const y = stringY(i);
-    svg.appendChild(el("line", {
-      x1: PAD_L, y1: y, x2: PAD_L + numFrets * FRET_W, y2: y,
-      // Thicker toward the low string. Four fat bass strings and six
-      // guitar strings want the same range of weights, so the taper is
-      // measured as a fraction of however many strings there are.
-      stroke: "var(--string)",
-      "stroke-width": 1 + (numStrings - 1 - i) / Math.max(1, numStrings - 1) * 2
-    }));
+    const weight = 1 + (numStrings - 1 - i) / Math.max(1, numStrings - 1) * 2;
+    // Paired strings are each thinner than a single would be, and sit
+    // either side of where the course runs.
+    const each = perCourse > 1 ? weight * 0.62 : weight;
+    for (let k = 0; k < perCourse; k++) {
+      const offset = perCourse === 1 ? 0 : (k - (perCourse - 1) / 2) * 3;
+      svg.appendChild(el("line", {
+        x1: PAD_L, y1: y + offset, x2: PAD_L + numFrets * FRET_W, y2: y + offset,
+        stroke: "var(--string)", "stroke-width": each,
+      }));
+    }
     // Sat exactly where the open-note marker goes, so the tuning shows
     // through when that note is out of the scale and is hidden beneath
     // the marker when it is in — the notes draw on top of the board.
