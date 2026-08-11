@@ -15,7 +15,6 @@ import {
   MAJOR_SCALE,
   handReach,
   INSTRUMENTS,
-  DEFAULT_INSTRUMENT,
   setInstrument,
   instrument,
   supportsKind,
@@ -118,6 +117,26 @@ function playedSpan(grid, box) {
   return lo === null ? null : { lo, hi };
 }
 
+// ---- Persisted settings -------------------------------------
+// What's remembered between visits: the instrument, what's shown on it,
+// and the theme once someone has actually pressed the toggle. Nothing
+// here is asked for up front — it only exists once a choice has been
+// made, so a first visit behaves exactly as it always did.
+const STORE_KEY = "guitai:settings";
+function loadSettings() {
+  try {
+    return JSON.parse(localStorage.getItem(STORE_KEY)) ?? {};
+  } catch {
+    return {};   // private browsing, storage disabled, or corrupt JSON
+  }
+}
+function saveSetting(key, value) {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify({ ...loadSettings(), [key]: value }));
+  } catch { /* storage unavailable — the choice just won't outlive the tab */ }
+}
+const saved = loadSettings();
+
 // ---- Day and night ----------------------------------------
 /**
  * The six bands hold up on either field, so the theme moves only the
@@ -125,12 +144,11 @@ function playedSpan(grid, box) {
  * fretboard is dark and inverting the one thing you are reading would
  * be a strange thing to do to it.
  *
- * The starting theme is whatever the machine already asked for. Nothing
- * is remembered between visits: this is a preference the operating
- * system already holds, and asking twice would be asking twice.
+ * The starting theme is whatever was chosen last time, or — nothing
+ * chosen yet — whatever the machine already asks for.
  */
 const prefersDay = window.matchMedia?.("(prefers-color-scheme: light)");
-let theme = prefersDay?.matches ? "day" : "night";
+let theme = saved.theme ?? (prefersDay?.matches ? "day" : "night");
 
 function applyTheme() {
   document.documentElement.setAttribute("data-theme", theme);
@@ -2055,20 +2073,33 @@ function initControls() {
   const instSel = document.getElementById("instrument");
   Object.values(INSTRUMENTS).forEach(i =>
     instSel.appendChild(new Option(i.name, i.id)));
-  instSel.value = DEFAULT_INSTRUMENT;
-  instSel.addEventListener("change", e => switchInstrument(e.target.value));
+  // The instrument itself was already mounted before the board's first
+  // draw (see the bottom of this file), so this just names what's
+  // already true rather than switching anything.
+  instSel.value = instrument.id;
+  instSel.addEventListener("change", e => {
+    switchInstrument(e.target.value);
+    saveSetting("instrument", e.target.value);
+  });
 
   const rootSel = document.getElementById("root");
   rootOptions.forEach(n => rootSel.appendChild(new Option(n, n)));
-  rootSel.value = "G";
+  rootSel.value = rootOptions.includes(saved.root) ? saved.root : "G";
 
-  fillKindMenu();
-  fillMaterialMenu("scale");
+  document.getElementById("kind").value = saved.kind ?? "scale";
+  const startKind = fillKindMenu();
+  fillMaterialMenu(startKind);
+  if (saved.scale) {
+    const scaleSel = document.getElementById("scale");
+    if ([...scaleSel.options].some(o => o.value === saved.scale)) scaleSel.value = saved.scale;
+  }
   syncMasthead();
 
   // Switching between scales and arpeggios reloads the menu beneath it.
   document.getElementById("kind").addEventListener("change", e => {
     fillMaterialMenu(e.target.value);
+    saveSetting("kind", e.target.value);
+    saveSetting("scale", document.getElementById("scale").value);
     seekAnchor = true;
     clearPath();
     syncCagedControls();
@@ -2080,6 +2111,7 @@ function initControls() {
   // voided — its notes may not exist in the new scale.
   ["root", "scale"].forEach(id =>
     document.getElementById(id).addEventListener("change", () => {
+      saveSetting(id, document.getElementById(id).value);
       seekAnchor = true;
       clearPath();
       syncCagedControls();
@@ -2103,12 +2135,13 @@ function initControls() {
   syncLabelsBtn();
 
   // Following the machine holds only until you say otherwise: once the
-  // button is pressed, that choice stands for the rest of the session.
-  let chosen = false;
+  // button is pressed, that choice stands from then on, on every visit.
+  let chosen = saved.theme != null;
   document.getElementById("themeBtn").addEventListener("click", () => {
     chosen = true;
     theme = theme === "night" ? "day" : "night";
     applyTheme();
+    saveSetting("theme", theme);
   });
   prefersDay?.addEventListener?.("change", e => {
     if (chosen) return;
@@ -2190,6 +2223,13 @@ function initControls() {
   applyTheme();
   syncCagedControls();
   render();
+}
+
+// Mount whatever instrument was last chosen before the board's first
+// draw, so it's sized right from the start instead of drawing as a
+// guitar and immediately redrawing as something else.
+if (saved.instrument && saved.instrument !== instrument.id && INSTRUMENTS[saved.instrument]) {
+  setInstrument(saved.instrument);
 }
 
 drawBoard();
