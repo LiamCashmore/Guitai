@@ -137,6 +137,11 @@ export const INSTRUMENTS = {
       // chop-chord shape fretted on all four strings, so neither habit
       // should weigh as heavily here as it does on a guitar.
       fingerCost: 0.35,
+      // And a barre is barely an event on this instrument: four light
+      // strings a hand's width apart, over a neck a third the length of
+      // a guitar's. The two-finger chop shapes are two small barres and
+      // are what a player reaches for first, not a last resort.
+      barreCost: 0.45,
       openBonus: 0.15,
       openBonusCap: 0.4,
       // A closed movable shape is chosen for its hand pattern more than
@@ -203,6 +208,32 @@ export const INSTRUMENTS = {
       scaleLength: 26,
       reach: { comfort: Infinity, max: Infinity },
       openReach: 5,
+      // The root underneath counts for far less here than on a guitar,
+      // and the instrument's own open chord is the proof: strummed with
+      // nothing held down, an open-G banjo sounds D G B D — a G major in
+      // second inversion, with the D underneath, and nobody hears it as
+      // anything but G. The 4th string is a middle-register D, not a
+      // foundation, and the 5th string drones a g above the whole chord
+      // regardless. Left at the guitar's figure, this bonus was buying
+      // root position by dropping the 4th string from grips that want
+      // it: a C at the fifth fret came out as a three-string barre with
+      // the 4th muted, where every player simply lays the index across
+      // all four.
+      rootBonus: 0.6,
+      // Four strings of light steel, and the fifth not under the hand at
+      // all: laying one finger across the neck here is nothing like
+      // doing it over six wound guitar strings, and the barred shapes up
+      // the neck are the ordinary way to play in the closed keys.
+      barreCost: 0.6,
+      // A banjo chord is a shape on the 4th, 3rd, 2nd and 1st strings
+      // with the 5th droning over it, and the four fingers are simply
+      // what holds it — not a cost reluctantly paid, the way a guitarist
+      // counts fingers against reaching for an open shape. So a finger
+      // is cheap here, and every one of the four strings sounding is
+      // worth going out of the way for. Between them these two say the
+      // thing the ranking could not: prefer the whole grip.
+      fingerCost: 0.45,
+      fullGripBonus: 2.5,
       // A banjo sits above a guitar in register too, if not as far above
       // as a mandolin — and its usual grips lean on all four fingers
       // across the four fretted strings, where a repeated third or fifth

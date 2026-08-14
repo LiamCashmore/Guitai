@@ -13,8 +13,8 @@
 // ============================================================
 
 import { MAJOR_SCALE, spellScale } from "./theory.js";
-import { instrument } from "./fretboard.js";
-import { chordVoicings, rankVoicings } from "./voicings.js";
+import { instrument, droneStrings } from "./fretboard.js";
+import { chordVoicings, rankVoicings, fragmentVoicings } from "./voicings.js";
 
 export const progressionGroups = {
   "Presets": ["I – IV – V", "ii – V – I"],
@@ -83,8 +83,54 @@ function candidatesAcrossNeck(root, type, perRegion = 2) {
   // neck. Three frets to a bucket sounds harmless and isn't: the grips
   // starting at the third fret crowd out the ones starting at the fifth,
   // so a hand asking for the fifth is offered the third and drifts.
+  return bestPerStartingFret(grounded, type, perRegion);
+}
+
+/**
+ * The grips for one chord that a hand at THIS stretch of neck can hold.
+ *
+ * The window is a boundary, not a preference. A progression is shown
+ * against a band of frets the player is being asked to keep their hand
+ * in, so a chord that reaches two frets past it is not a slightly worse
+ * answer — it is the wrong answer to the question asked, and it puts
+ * notes on the board outside the very band the board is highlighting.
+ *
+ * Which means a chord can turn out to have no grip here at all, and the
+ * answer to that is the same as everywhere else: ask for less rather
+ * than nothing. The chord whole, then its shell, then whatever fragment
+ * of it the window can sound — see fragmentVoicings. Every window holds
+ * something, so every chord of the progression can be played without the
+ * hand leaving the band.
+ *
+ * Open strings need no rule of their own here. An open string is fret 0,
+ * so it is inside the window only when the window is at the nut, which
+ * is exactly where open shapes belong. A drone is the exception it
+ * always is: a banjo's 5th string rings from its own nut wherever the
+ * hand is, so it is never out of bounds.
+ */
+function candidatesInWindow(root, type, { lo, hi }, perRegion = 2) {
+  const fits = v => v.cells.every(c =>
+    (c.fret === 0 && droneStrings.has(c.string)) || (c.fret >= lo && c.fret <= hi));
+
+  const search = opts => chordVoicings(root, type, { stacked: false, openAnywhere: false, ...opts });
+  let here = search({}).filter(fits);
+  if (!here.length) here = search({ relaxed: true }).filter(fits);
+  if (!here.length) here = fragmentVoicings(root, type, { lo, hi });
+
+  return bestPerStartingFret(here, type, perRegion);
+}
+
+/**
+ * The best few grips at each fret a grip can start on.
+ *
+ * Ranking alone returns four ways of playing the same three frets, which
+ * is no use to a search that may need the hand somewhere else — so the
+ * candidates are grouped by where they begin and the best of each group
+ * kept, giving the route a real choice of where to be.
+ */
+function bestPerStartingFret(list, type, perRegion) {
   const regions = new Map();
-  for (const v of grounded) {
+  for (const v of list) {
     if (!regions.has(v.lo)) regions.set(v.lo, []);
     regions.get(v.lo).push(v);
   }
@@ -144,41 +190,29 @@ function moveCost(from, to) {
  *
  * @param ease   how much a grip's own difficulty counts against how far
  *               the hand must travel to reach it
- * @param window {lo, hi} the stretch of neck being asked about. The route
- *               is held here, but only held — a chord that needs a fret
- *               or two outside can have it, at a price. Left out, the
- *               route is free to sit wherever the neck suits it best.
+ * @param window {lo, hi} the stretch of neck being asked about, and a
+ *               boundary: every note of every grip is inside it, down to
+ *               a fragment of a chord where the whole one won't fit. Left
+ *               out, the route is free to sit wherever the neck suits it.
  */
 export function progressionVoicings(key, name, { ease = 1, window = null } = {}) {
   const steps = progressionSteps(key, name);
   if (!steps.length) return [];
 
-  // With the hand up the neck, an open string is not a small stray — it
-  // is a note at the nut, and it reads as the progression jumping back
-  // to open position however comfortable it is to play. Near the nut
-  // they are the whole point, so the rule only applies further up.
-  const upTheNeck = window && window.lo >= 2;
-  const columns = steps.map(s => {
-    const all = candidatesAcrossNeck(s.root, s.type);
-    if (!upTheNeck) return all;
-    const closed = all.filter(v => v.cells.every(c => c.fret > 0));
-    return closed.length ? closed : all;
-  });
+  const columns = steps.map(s => window
+    ? candidatesInWindow(s.root, s.type, window)
+    : candidatesAcrossNeck(s.root, s.type));
   if (columns.some(c => c.length === 0)) return [];
 
-  // What it costs to be outside the stretch being asked about. Inside is
-  // free — anywhere in the window is somewhere the hand already is — and
-  // past its edges the price climbs steeply enough that a chord only
-  // leaves when the alternative is genuinely worse. This is what makes
-  // the progression follow the window instead of settling wherever the
-  // neck happens to be easiest, which is always the open position.
-  const strayCost = v => {
-    if (!window) return 0;
-    const outside = Math.max(0, window.lo - v.lo, v.hi - window.hi);
-    return outside * 3.5;
-  };
-
-  const nodeCost = v => v.ease * ease + strayCost(v);
+  // Nothing here prices the window any more. It used to be a cost — a
+  // few points per fret outside — which is the right shape for a
+  // preference and the wrong one for a boundary: a chord that was much
+  // easier two frets up simply paid the fine and went, and the board
+  // then drew notes outside the band it was highlighting. The window is
+  // applied where a boundary belongs, in what the columns are allowed to
+  // contain at all, so by the time the route is solved everything left
+  // is somewhere the hand already is.
+  const nodeCost = v => v.ease * ease;
 
   // Best route to each grip of the first chord is simply the grip.
   let paths = columns[0].map(v => ({ cost: nodeCost(v), chain: [v] }));

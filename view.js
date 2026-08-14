@@ -33,6 +33,7 @@ import {
   extendChain,
   pitchAt,
   chordVoicings,
+  fragmentVoicings,
   rankVoicings,
   progressionVoicings,
   hasOpenVoicing,
@@ -1828,10 +1829,13 @@ function effectiveVoicing(root, type, voicing) {
  *     place that didn't, and it was quietly throwing away most of the
  *     grips on the instrument — every one that lets the 5th string ring.
  */
+function cellFitsWindow(c, lo, hi) {
+  return (c.fret === 0 && (openOn || droneStrings.has(c.string))) ||
+         (c.fret >= lo && c.fret <= hi);
+}
+
 function gripFitsWindow(voicing, lo, hi) {
-  return voicing.cells.every(c =>
-    (c.fret === 0 && (openOn || droneStrings.has(c.string))) ||
-    (c.fret >= lo && c.fret <= hi));
+  return voicing.cells.every(c => cellFitsWindow(c, lo, hi));
 }
 
 /**
@@ -1839,9 +1843,10 @@ function gripFitsWindow(voicing, lo, hi) {
  *
  * At the hand's last position if a grip lives there, and otherwise at the
  * nearest stretch of neck that holds one. Dragging the window is left
- * alone: putting the hand somewhere a chord cannot be played is a fair
- * thing to ask, and it is answered by saying so. But arriving somewhere
- * empty without having asked is just a blank board.
+ * alone: every stretch of neck answers with something now, down to the
+ * fragment of the chord it can reach, so a drag is never refused — but
+ * arriving somewhere by accident that only holds a fragment, when the
+ * whole chord sits two frets away, is not what anyone meant to ask for.
  *
  * This matters far more on a bass than on a guitar. A guitar plays most
  * chords almost anywhere; a bass has no C at all below the eighth fret,
@@ -1955,6 +1960,25 @@ function voicingsFor(root, type, openAnywhere, { relaxed = false } = {}) {
   // is never.
   voicingCache[slot] ??= chordVoicings(root, type, { stacked: false, openAnywhere, relaxed });
   return voicingCache[slot];
+}
+
+/**
+ * The same, for the fragments a single window can hold.
+ *
+ * This one is keyed by the window as well, because that is what it is
+ * about — but it is still worth keeping, for the same reason: a drag
+ * re-renders on every pointer move, and a window that needs fragments at
+ * all is one where they are the whole answer, worked out afresh each
+ * time. On a dense chord that search runs into tens of milliseconds,
+ * which is a stutter under the finger rather than a slow load.
+ */
+let fragmentCache = { key: null, list: [] };
+function fragmentsFor(root, type, lo, hi, openAnywhere) {
+  const key = `${root}|${type}|${openAnywhere}|${lo}|${hi}`;
+  if (fragmentCache.key !== key) {
+    fragmentCache = { key, list: fragmentVoicings(root, type, { lo, hi, openAnywhere }) };
+  }
+  return fragmentCache.list;
 }
 
 /**
@@ -2141,16 +2165,25 @@ function render({ animate = true } = {}) {
     // gripFitsWindow for what that means and what escapes it.
     {
       let inWindow = all.filter(v => gripFitsWindow(v, winLo, winHi));
-      // Nothing fits. Sometimes that is the truth about the neck and the
-      // board should say so, but on a dense chord it usually isn't: the
-      // tones are simply not all reachable at once here — a banjo's G13
-      // between frets 4 and 8 has its seventh and its thirteenth on the
-      // same string and nowhere else — and what a player does there is
-      // play the shell and let the extension go. So ask again for the
+      // Nothing fits. That is almost never the truth about the neck —
+      // the tones are simply not all reachable at once here. A banjo's
+      // G13 between frets 4 and 8 has its seventh and its thirteenth on
+      // the same string and nowhere else, and what a player does there
+      // is play the shell and let the extension go. So ask again for the
       // shell, and let the label admit what is missing.
       if (!inWindow.length) {
         inWindow = voicingsFor(root, type, openOn, { relaxed: true })
           .filter(v => gripFitsWindow(v, winLo, winHi));
+      }
+      // Still nothing, which happens where even the shell is split
+      // across one string: G major between the 4th and 8th frets of a
+      // banjo has its B and its D nowhere but the third string. A blank
+      // board is the one answer that teaches nothing, and it isn't true
+      // either — the hand can still sound G and B there, which is the
+      // chord without its fifth. So the last question asked of a window
+      // is simply what it CAN hold, and the label names what it can't.
+      if (!inWindow.length) {
+        inWindow = fragmentsFor(root, type, winLo, winHi, openOn);
       }
       // A chord has hundreds of correct fingerings in any given stretch
       // of neck and a player wants three or four of them: the ones they
@@ -2167,9 +2200,22 @@ function render({ animate = true } = {}) {
     if (voicings.length) {
       posIndex = Math.max(0, Math.min(posIndex, voicings.length - 1));
       voicing = voicings[posIndex];
-      // An edit belongs to the grip it was made on. A different grip has
-      // come up, so it no longer describes anything.
-      if (gripEdit && gripEdit.sig !== voicingSig(voicing)) gripEdit = null;
+      // An edit belongs to the grip it was made on, and to the hand
+      // position it was made at. A different grip has come up, so it no
+      // longer describes anything — and neither does a note the hand has
+      // since moved away from.
+      //
+      // The second half is not covered by the first. A grip often stays
+      // the best answer over several positions of the window — a banjo's
+      // barred C is the top choice from the first fret to the fifth — so
+      // the signature can match while the window has slid clean past the
+      // note that was picked. The board then went on drawing a note the
+      // hand it is describing could not reach, outside the very band it
+      // was highlighting.
+      if (gripEdit && (gripEdit.sig !== voicingSig(voicing) ||
+          !gripEdit.cells.every(c => cellFitsWindow(c, winLo, winHi)))) {
+        gripEdit = null;
+      }
       voicing = effectiveVoicing(root, type, voicing) ?? voicing;
       // Ghosts follow the window when there is one, else the whole neck.
       const ghostRange = ghostOn
@@ -2199,8 +2245,11 @@ function render({ animate = true } = {}) {
     const posLabel = document.getElementById("posLabel");
     if (posLabel) {
       if (!voicing) {
-        // Full grips reach everywhere, so an empty window means stacking
-        // is the constraint, not the neck.
+        // Three tiers deep — the chord, its shell, and then whatever
+        // fragment of it the window holds — so this only happens where
+        // the window has fewer than two chord tones in it at all, which
+        // takes a one-note chord or a stretch of neck the instrument
+        // doesn't have.
         posLabel.textContent = `no grip fits frets ${winLo}–${winHi}`;
         posLabel.classList.remove("unplayable");
       } else {
