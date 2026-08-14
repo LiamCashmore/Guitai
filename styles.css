@@ -709,6 +709,62 @@ input[type="range"]::-moz-range-thumb {
 }
 .win-handle:hover .bar { opacity: 1; }
 
+/* ---- The capo ---------------------------------------------- */
+/* Painted in all six bands — the sunset stood on end, the same cut as the
+   mark in the masthead. Nothing else on the board carries the whole
+   palette, so the one object you can pick up and move is unmistakable.
+
+   No transition: a capo is clamped behind a particular fret, and there is
+   nowhere between two of them for it to be, so it snaps from one to the
+   next as it's dragged. */
+.capo {
+  cursor: grab;
+  touch-action: none;
+  filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.55));
+}
+.capo:active { cursor: grabbing; }
+.capo .capo-bar {
+  stroke: var(--wood-edge);
+  stroke-width: 1.5;
+}
+.capo .capo-screw {
+  fill: var(--band-4);
+  stroke: var(--wood-edge);
+  stroke-width: 1.5;
+}
+.capo:hover .capo-bar { stroke: var(--band-4); }
+
+/* The spike: the same bar cut down to one string, so it needs no colours
+   of its own — it is the same object doing the same job.
+
+   Its pin-head sits out past the end of the short 5th string's neck,
+   where the page shows through rather than the fretboard, so it takes the
+   page's own chrome colours and not the board's. */
+.spike-btn { cursor: pointer; }
+.spike-btn circle {
+  fill: var(--chip);
+  stroke: var(--line);
+  stroke-width: 1.5;
+  transition: fill var(--fade), stroke var(--fade);
+}
+.spike-btn .pin {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.spike-btn:hover circle { stroke: var(--line-hover); }
+.spike-btn.on circle { fill: var(--band-3); stroke: var(--band-2); }
+.spike-btn.on .pin { stroke: var(--on-band); }
+
+/* The frets behind the bar, darkened out. The neck is still there — it
+   just has nothing left to say. */
+.capo-shade {
+  fill: var(--wood-edge);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
 /* ---- Narrow screens ---------------------------------------- */
 /* The controls fold into a grid; the neck keeps its size and scrolls,
    because a fretboard squeezed to phone width stops being readable. */

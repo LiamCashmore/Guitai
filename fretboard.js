@@ -152,6 +152,14 @@ export const INSTRUMENTS = {
       // naming directly rather than hoping the other terms add up to
       // favouring it, since none of them are actually about this.
       closedGripBonus: 3,
+      // And its mirror in the open position, worth exactly as much: the
+      // first-position chords, 0-2-3-0 for C and 0-0-2-3 for G, where the
+      // open strings sound the chord and the hand puts down two fingers
+      // instead of four. A chop shape is chosen for being movable, and
+      // nothing at the nut needs moving. Set equal to the closed bonus so
+      // neither shape wins by fiat — the two cancel, and what decides is
+      // what should: the fingers, the reach, the notes under them.
+      openGripBonus: 3,
       // Charged in inches, a tight shape at the twelfth fret can look
       // cheaper than the same shape at the fifth — correctly, for the
       // hand's span, but the arm still has to get up there. A small tax
@@ -251,24 +259,233 @@ export const DEFAULT_INSTRUMENT = "guitar";
 export let instrument   = INSTRUMENTS[DEFAULT_INSTRUMENT];
 export let numFrets     = instrument.numFrets;
 export let openMidi     = instrument.openMidi;
-export let tuning       = openMidi.map(m => FLAT_NAMES[midiToPc(m)]);   // low -> high
+// The open notes as they actually sound, spelled for the labels beside
+// the nut — which is not the same as the tuning written on the pegs once
+// a capo is on. See capoFret.
+export let tuning       = [];                                           // low -> high
 // Chromatic grid: every pitch class at every fret of every string.
-export let chromaticGrid = capDroneStrings(
-  openMidi.map(m => getFretPcs(midiToPc(m), numFrets)), instrument);
-export let numStrings    = chromaticGrid.length;
+export let chromaticGrid = [];
+export let numStrings    = 0;
 // Short strings that start partway up the neck — a banjo's 5th, so far —
 // mapped to the fret their own nut sits at. Read by midiAt below, by
 // paths.js, which walks raw fret arithmetic rather than this grid and so
 // needs telling directly, and by view.js for where to draw them.
-export let droneStrings  = new Map((instrument.droneStrings ?? []).map(d => [d.string, d.nutFret]));
+export let droneStrings  = new Map();
 // Which row each string draws on, bottom to top — identity unless an
 // instrument says otherwise (see the banjo entry above for why one
 // would). Purely a view concern; nothing in the model reads it.
-export let displayOrder  = instrument.displayOrder ?? identityOrder(numStrings);
+export let displayOrder  = [];
+
+// ------------------------------------------------------------
+// THE CAPO
+//
+// A bar clamped across the neck, and to the model it does exactly one
+// thing: it moves the open note. The notes under the bar ARE the open
+// strings now — fret 0 of a capoed string sounds what that fret sounds —
+// and there is nothing behind the bar to press, so those frets stop
+// existing the way a drone string's do below its own nut.
+//
+// Fret numbers stay the board's own throughout. A capo at the 3rd fret
+// does not renumber the 5th fret; it makes fret 0 sound what fret 3 did,
+// and leaves frets 1-3 unreachable. Everything downstream reads the grid
+// and gets that for free.
+//
+// Which strings it covers is not a per-instrument list: the bar lies
+// across the neck, so it covers every string the neck carries — all of
+// them, except a drone. A banjo's 5th string has its own nut at the 5th
+// fret and sits off the low side of the neck, where no capo laid across
+// the other four ever touches it, which is why a capoed banjo is D G B D
+// with the high g still droning at pitch. That is the instrument, not a
+// setting.
+// ------------------------------------------------------------
+export let capoFret = 0;
+
+/** Is this string under the bar? A drone never is — see above. */
+export function capoCovers(string) {
+  return capoFret > 0 && !droneStrings.has(string);
+}
+
+// ------------------------------------------------------------
+// THE SPIKE
+//
+// The answer to the paragraph above. A banjo's 5th string never goes
+// under the capo, so players drive a small hooked pin into the fretboard
+// beside it and push the string under that instead — usually at the 7th
+// and 9th frets, which is exactly the pair that goes with a capo at the
+// 2nd and 4th. Capo 2 with the string spiked at 7 puts the whole
+// instrument in A: the four strings on the neck, and the drone up at a
+// with them, instead of a g ringing against the chord all night.
+//
+// It is a capo for one string, and nothing here treats it as anything
+// else. The two can never meet — a bar across the neck cannot reach a
+// drone, and a pin is only ever driven beside one — so which of them
+// holds a given string is settled once, in barFret below, and everything
+// downstream asks that rather than asking about capos and spikes.
+// ------------------------------------------------------------
+export let spikeFrets = new Map();   // drone string -> the fret it is held at
+
+/** Where the spike sits on a string, or 0 for none. */
+export function spikeAt(string) {
+  return spikeFrets.get(string) ?? 0;
+}
+
+/**
+ * The frets a string's spike may occupy — from just above that string's
+ * own nut to as far as a capo could reach — or null for a string that
+ * cannot take one, which is every string but a drone.
+ */
+export function spikeRange(string) {
+  const nut = droneStrings.get(string);
+  return nut === undefined ? null : { lo: nut + 1, hi: maxCapoFret() };
+}
+
+/**
+ * Drive a spike, or pull it out with 0.
+ *
+ * @returns {number} where it actually landed, after clamping
+ */
+export function setSpike(string, fret) {
+  const range = spikeRange(string);
+  if (!range) return 0;
+  const at = fret ? Math.max(range.lo, Math.min(Math.round(fret), range.hi)) : 0;
+  if (at) spikeFrets.set(string, at); else spikeFrets.delete(string);
+  rebuild(instrument);
+  return at;
+}
+
+/**
+ * The fret a string is held at by something that isn't a finger — the
+ * capo lying across the neck, or the spike beside a drone. 0 when the
+ * string is free to ring from its own nut.
+ *
+ * This is the question every other part of the model actually has; capos
+ * and spikes are two ways of answering it.
+ */
+export function barFret(string) {
+  return droneStrings.has(string) ? spikeAt(string) : capoFret;
+}
+
+/** Everything clamped to the neck right now, for anything caching by it. */
+export function barsKey() {
+  return `${capoFret}` + [...spikeFrets].map(([s, f]) => `/${s}:${f}`).join("");
+}
+
+/**
+ * The highest fret a capo may sit on. Past the octave nobody capos, and
+ * the neck above it has to keep enough room for a hand.
+ */
+export function maxCapoFret() {
+  return Math.max(1, Math.min(12, numFrets - 1));
+}
+
+/**
+ * Is a hand sitting at fret `lo` up against the nut?
+ *
+ * Which is the question everything asks when it wants to know whether the
+ * open strings are under that hand. With a capo on, the nut has moved,
+ * and so has the answer.
+ */
+export function handAtNut(lo) {
+  return lo <= capoFret;
+}
+
+/**
+ * Is fret `f` under a hand covering frets lo..hi?
+ *
+ * Fret 0 is the open note rather than a place on the neck, so it is only
+ * under the hand when the hand is at the nut — or at the capo, which is
+ * now the same thing.
+ */
+export function fretUnderHand(f, lo, hi) {
+  return f === 0 ? handAtNut(lo) : (f >= lo && f <= hi);
+}
+
+/**
+ * Where a fret sits ON THE NECK, for measuring shapes, spans and how far
+ * the hand travels — as opposed to what it sounds, which is midiAt.
+ *
+ * The fret number itself, except for the open note. That is played at the
+ * nut, and a capo has moved the nut: an open string under a capo at the
+ * 2nd fret is being held down at the 2nd fret, by the bar instead of by a
+ * finger. Reading it as fret 0 puts it at the end of the neck, which is
+ * how the open shapes stopped being recognisable under a capo — the very
+ * thing a capo is for. Without one this is the identity.
+ */
+export function handFret(f) {
+  return f === 0 ? capoFret : f;
+}
+
+/**
+ * Move the capo, or take it off with 0.
+ *
+ * @returns {number} where it actually landed, after clamping
+ */
+export function setCapo(fret) {
+  capoFret = Math.max(0, Math.min(Math.round(fret), maxCapoFret()));
+  rebuild(instrument);
+  return capoFret;
+}
 
 function identityOrder(n) {
   return Array.from({ length: n }, (_, i) => i);
 }
+
+/**
+ * Recompute the whole board from an instrument's open pitches and
+ * whatever is currently clamped to it. The one place the live state above
+ * is written, so mounting an instrument and moving the capo are the same
+ * operation with a different reason.
+ */
+function rebuild(forInstrument) {
+  numFrets      = forInstrument.numFrets;
+  openMidi      = forInstrument.openMidi;
+  droneStrings  = new Map((forInstrument.droneStrings ?? []).map(d => [d.string, d.nutFret]));
+  displayOrder  = forInstrument.displayOrder ?? identityOrder(openMidi.length);
+  // A capo carried over from a longer neck may not fit this one, and a
+  // spike belongs to a drone string another instrument may not have.
+  capoFret      = Math.max(0, Math.min(capoFret, maxCapoFret()));
+  spikeFrets    = new Map([...spikeFrets]
+    .filter(([s]) => droneStrings.has(s))
+    .map(([s, f]) => {
+      const range = { lo: droneStrings.get(s) + 1, hi: Math.max(1, Math.min(12, numFrets - 1)) };
+      return [s, Math.max(range.lo, Math.min(f, range.hi))];
+    }));
+  chromaticGrid = clampBars(
+    capDroneStrings(openMidi.map(m => getFretPcs(midiToPc(m), numFrets)), forInstrument));
+  numStrings    = chromaticGrid.length;
+  // What the strings sound now, which is what belongs beside the nut —
+  // capoed at the 2nd fret a guitar reads F# B E A C# F#, and printing
+  // E A D G B E there would be printing a note nothing can play.
+  tuning        = openMidi.map((_, s) => FLAT_NAMES[midiToPc(midiAt(s, 0))]);
+}
+
+/**
+ * Lay whatever is clamped to the neck across the grid: the frets behind
+ * a bar stop existing, and the fret it sits on becomes the open note.
+ *
+ * The same shape of edit capDroneStrings makes, and for the same reason —
+ * a string that starts partway up the neck — except that here the frets
+ * above the bar keep their own numbering, because the neck is unchanged
+ * and only the string's starting point has moved.
+ *
+ * One loop covers the capo and the spike both, because to a string there
+ * is no difference between them: something is holding it down at a fret,
+ * and that fret is where it now begins.
+ */
+function clampBars(grid) {
+  return grid.map((stringPcs, s) => {
+    const bar = barFret(s);
+    if (!bar) return stringPcs;
+    return stringPcs.map((pc, f) => {
+      if (f === 0) return stringPcs[bar];   // the bar is the open string now
+      if (f <= bar) return null;            // behind it; nothing to press
+      return pc;
+    });
+  });
+}
+
+// The board as it stands the moment this module loads.
+rebuild(instrument);
 
 /**
  * Re-lay a drone string's frets, which do not start where the board's do.
@@ -305,10 +522,19 @@ function capDroneStrings(grid, forInstrument) {
  * Ordinarily it is the open pitch plus the fret number. A drone string
  * is the exception, and has to be: its nut is up the neck, so the fret
  * number overstates how far above the open note it is by exactly the
- * distance to that nut. Fret 0 stays the open note either way.
+ * distance to that nut.
+ *
+ * Fret 0 is the open note in every case — but a capo or a spike has moved
+ * what that is, and only that: the frets above the bar are the same
+ * pitches they always were, since the neck has not changed, only where
+ * the string begins.
+ *
+ * Which makes the open note no special case at all. It is the string
+ * sounding from wherever it is held, and the same arithmetic answers it.
  */
 export function midiAt(string, fret) {
-  return openMidi[string] + Math.max(0, fret - (droneStrings.get(string) ?? 0));
+  const at = fret === 0 ? barFret(string) : fret;
+  return openMidi[string] + Math.max(0, at - (droneStrings.get(string) ?? 0));
 }
 
 /**
@@ -359,14 +585,11 @@ export function tightSpan() {
 export function setInstrument(id) {
   const next = INSTRUMENTS[id];
   if (!next) throw new Error(`unknown instrument: ${id}`);
-  instrument    = next;
-  numFrets      = next.numFrets;
-  openMidi      = next.openMidi;
-  tuning        = openMidi.map(m => FLAT_NAMES[midiToPc(m)]);
-  chromaticGrid = capDroneStrings(openMidi.map(m => getFretPcs(midiToPc(m), numFrets)), next);
-  numStrings    = chromaticGrid.length;
-  droneStrings  = new Map((next.droneStrings ?? []).map(d => [d.string, d.nutFret]));
-  displayOrder  = next.displayOrder ?? identityOrder(numStrings);
+  instrument = next;
+  // The capo stays where it was put. It is a thing clamped to a neck, not
+  // a property of one, and picking up another instrument with the capo
+  // still in your hand is what actually happens.
+  rebuild(next);
   return instrument;
 }
 

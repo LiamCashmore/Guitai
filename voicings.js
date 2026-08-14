@@ -13,7 +13,7 @@
 // ============================================================
 
 import { getScaleDegrees } from "./theory.js";
-import { instrument, numFrets, numStrings, droneStrings, midiAt, buildScaleGrid } from "./fretboard.js";
+import { instrument, numFrets, numStrings, droneStrings, midiAt, buildScaleGrid, capoFret, handAtNut, handFret } from "./fretboard.js";
 import { pitchAt } from "./paths.js";
 
 // Four frets is what the hand covers without complaint on a guitar-scale
@@ -379,8 +379,14 @@ function cagedGrip(voicing, degrees) {
   const quality = degrees.includes("b3") ? "minor" : degrees.includes("3") ? "major" : null;
   if (!quality) return null;
 
-  const lo = Math.min(...voicing.cells.map(c => c.fret));
-  const pattern = voicing.cells.map(c => c.fret - lo);
+  // Measured where the hand actually is, so an open string under a capo
+  // counts as held at the bar. This is the whole point of a capo: the
+  // open shapes are what a player moves up the neck to keep playing, and
+  // reading their open strings as fret 0 made the shape unrecognisable
+  // the moment one went on.
+  const frets = voicing.cells.map(c => handFret(c.fret));
+  const lo = Math.min(...frets);
+  const pattern = frets.map(f => f - lo);
   for (const grip of CAGED_GRIPS) {
     if (grip.quality !== quality) continue;
     if (grip.from !== voicing.strings[0]) continue;
@@ -595,6 +601,33 @@ function voicingEase(voicing, degrees, type) {
     score -= instrument.chords.fullGripBonus ?? 0;
   }
 
+  // And the chop chord's mirror, at the bottom of the neck.
+  //
+  // A closed shape earns its bonus by being movable — the same grip in
+  // every key. That virtue is worth nothing in the open position, where
+  // the strings are already sounding the chord's own notes for free: a
+  // mandolin's open C is 0-2-3-0 and its open G is 0-0-2-3, two fingers
+  // apiece against the chop chord's four, and no player chops those with
+  // the open strings sitting right there. Without this the chop bonus
+  // won everywhere, including at the nut, and the open chords — the first
+  // shapes anyone learns on the instrument — were never offered.
+  //
+  // The capped open bonus above cannot say this on its own. It is capped
+  // precisely so that open strings don't float thin two-string fragments
+  // to the top, so it is far too small to outweigh a whole closed grip.
+  // This is the other statement: not "open strings are nice" but "this is
+  // the open chord", every string sounding and the chord complete, which
+  // is the same shape of claim the closed bonus makes and settles against
+  // it directly.
+  //
+  // It needs no sense of where the window is. An open string only reaches
+  // a grip when the hand is at the nut — or at the capo, which is the nut
+  // now, so a capoed open shape earns this exactly as its nut-position
+  // original does.
+  if (open > 0 && leftOut === 0 && [...required].every(d => sounded.has(d))) {
+    score -= instrument.chords.openGripBonus ?? 0;
+  }
+
   // The drone string.
   //
   // A banjo's 5th string is not an open string in the sense the bonus
@@ -800,25 +833,52 @@ function fullVoicings(root, type, { openAnywhere = false, relaxed = false } = {}
 
   // Every string open, unfretted, is the whole point of an open tuning —
   // strumming a banjo in open G with nothing held down IS a G major
-  // chord. The search below is built around a fretted anchor and can
-  // never produce that, so it's checked once here instead. Ordinary
-  // tunings don't spell a chord this way (EADGBE resolves to no triad
-  // at all), so this simply never fires for them.
-  if (grid.every(row => row[0])) {
-    const cells = grid.map((row, s) => ({ string: s, fret: 0 }));
-    const notes = cells.map(c => grid[c.string][0]);
-    const sounded = new Set(notes.map(n => n.degree));
-    if (satisfies(sounded, wants)) {
-      const lowest = lowestCell(cells);
-      const bass = grid[lowest.string][lowest.fret].degree;
-      out.push({
-        cells, notes, span: 0, stretch: false,
-        lo: 0, hi: 0, strings: cells.map(c => c.string),
-        fingers: 0, barre: null, barres: [],
-        order: notes.map(n => n.degree).join("-"),
-        bass, omits: omitsOf(sounded),
-        label: labelFor(notes, bass),
-      });
+  // chord, and capoed at the 2nd fret it is an A. The search below is
+  // built around a fretted anchor and can never produce that, so it is
+  // checked once here instead. Ordinary tunings don't spell a chord this
+  // way (EADGBE resolves to no triad at all), so this simply never fires
+  // for them.
+  //
+  // What "every string" means is the question a capo turns up. A drone
+  // is the exception it always is: it sits off the side of the neck and
+  // is picked on its own, so a drone that doesn't belong to the chord is
+  // simply not picked — where an ordinary string, under the strumming
+  // hand with nothing stopping it, will sound whether it belongs or not
+  // and there is no finger anywhere to damp it with.
+  //
+  // Which is exactly a capoed banjo. Capo the 2nd fret and the four
+  // strings on the neck are E A C# E — an A chord, the same open shape
+  // the instrument is built around, moved up. The 5th string goes on
+  // droning g, which is not in A, so a player leaves it alone or spikes
+  // it. Demanding it belong meant the one grip a banjo player would
+  // actually reach for was never offered at all, and the board fell back
+  // to whatever fragment it could find.
+  {
+    const open = [];      // strings whose open note is in the chord
+    let spoiled = false;  // one that isn't, and that a strum would sound
+    for (let s = 0; s < numStrings; s++) {
+      if (grid[s][0]) open.push(s);
+      else if (!droneStrings.has(s)) { spoiled = true; break; }
+    }
+    if (!spoiled && open.length) {
+      const cells = open.map(s => ({ string: s, fret: 0 }));
+      const notes = cells.map(c => grid[c.string][0]);
+      const sounded = new Set(notes.map(n => n.degree));
+      if (satisfies(sounded, wants)) {
+        const lowest = lowestCell(cells);
+        const bass = grid[lowest.string][lowest.fret].degree;
+        out.push({
+          cells, notes, span: 0, stretch: false,
+          // Open notes are played at the nut, and the capo is the nut
+          // now — so this grip sits at the bar, not at fret 0, for
+          // everything that asks where on the neck the hand is.
+          lo: capoFret, hi: capoFret, strings: cells.map(c => c.string),
+          fingers: 0, barre: null, barres: [],
+          order: notes.map(n => n.degree).join("-"),
+          bass, omits: omitsOf(sounded),
+          label: labelFor(notes, bass),
+        });
+      }
     }
   }
 
@@ -1058,8 +1118,10 @@ export function chordVoicings(root, type, { stacked = true, openAnywhere = false
         const span = stopped.length
           ? Math.max(...stopped) - Math.min(...stopped) + 1 : 0;
         if (span > chordSpan()) return;
-        if (cells.some(c => c.fret === 0) &&
-            stopped.length && Math.max(...stopped) > instrument.chords.openReach) return;
+        // How far up the neck an open string may be left ringing is
+        // measured from wherever the open note is — the nut, or the capo.
+        if (cells.some(c => c.fret === 0) && stopped.length &&
+            Math.max(...stopped) - capoFret > instrument.chords.openReach) return;
 
         const frets = cells.map(c => c.fret);
         const key = gripKey(cells);
@@ -1129,7 +1191,7 @@ export function fragmentVoicings(root, type, { lo, hi, openAnywhere = false } = 
   const options = [];
   for (let s = 0; s < numStrings; s++) {
     const frets = [];
-    if (grid[s][0] && (lo === 0 || openAnywhere || droneStrings.has(s))) frets.push(0);
+    if (grid[s][0] && (handAtNut(lo) || openAnywhere || droneStrings.has(s))) frets.push(0);
     for (let f = Math.max(lo, 1); f <= Math.min(hi, numFrets); f++) {
       if (grid[s][f]) frets.push(f);
     }
@@ -1571,8 +1633,10 @@ function bassSearch(root, type, core, openAnywhere) {
         if (inches > reach.max) return;                    // no hand is that wide
 
         // An open string rings wherever the hand is, but a grip mixing
-        // the nut with the top of the neck is not one anybody plays.
-        if (cells.some(c => c.fret === 0) && !openAnywhere && hi > openReach) return;
+        // the nut with the top of the neck is not one anybody plays. The
+        // nut here is the capo when there is one — the reach is from
+        // where the open note actually sounds.
+        if (cells.some(c => c.fret === 0) && !openAnywhere && hi - capoFret > openReach) return;
 
         const grip = gripFingering(cells);
         if (!grip) return;

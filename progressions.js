@@ -13,7 +13,7 @@
 // ============================================================
 
 import { MAJOR_SCALE, spellScale } from "./theory.js";
-import { instrument, droneStrings } from "./fretboard.js";
+import { instrument, droneStrings, capoFret, fretUnderHand } from "./fretboard.js";
 import { chordVoicings, rankVoicings, fragmentVoicings } from "./voicings.js";
 
 export const progressionGroups = {
@@ -76,7 +76,9 @@ function candidatesAcrossNeck(root, type, perRegion = 2) {
   const grounded = all.filter(v => {
     const stopped = v.cells.filter(c => c.fret > 0).map(c => c.fret);
     if (!v.cells.some(c => c.fret === 0) || !stopped.length) return true;
-    return Math.max(...stopped) <= instrument.chords.openReach;
+    // Near the nut — which with a capo on is near the bar, since that is
+    // where the open strings are ringing from.
+    return Math.max(...stopped) - capoFret <= instrument.chords.openReach;
   });
 
   // Bucketed by the fret the grip starts on, not by a wider stretch of
@@ -103,14 +105,15 @@ function candidatesAcrossNeck(root, type, perRegion = 2) {
  * hand leaving the band.
  *
  * Open strings need no rule of their own here. An open string is fret 0,
- * so it is inside the window only when the window is at the nut, which
- * is exactly where open shapes belong. A drone is the exception it
- * always is: a banjo's 5th string rings from its own nut wherever the
- * hand is, so it is never out of bounds.
+ * so it is inside the window only when the window is at the nut — or at
+ * the capo, which is the nut now — and that is exactly where open shapes
+ * belong. A drone is the exception it always is: a banjo's 5th string
+ * rings from its own nut wherever the hand is, so it is never out of
+ * bounds.
  */
 function candidatesInWindow(root, type, { lo, hi }, perRegion = 2) {
   const fits = v => v.cells.every(c =>
-    (c.fret === 0 && droneStrings.has(c.string)) || (c.fret >= lo && c.fret <= hi));
+    (c.fret === 0 && droneStrings.has(c.string)) || fretUnderHand(c.fret, lo, hi));
 
   const search = opts => chordVoicings(root, type, { stacked: false, openAnywhere: false, ...opts });
   let here = search({}).filter(fits);

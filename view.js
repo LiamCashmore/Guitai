@@ -24,6 +24,19 @@ import {
   chromaticGrid,
   droneStrings,
   displayOrder,
+  capoFret,
+  capoCovers,
+  maxCapoFret,
+  setCapo,
+  spikeAt,
+  setSpike,
+  spikeRange,
+  spikeFrets,
+  barFret,
+  barsKey,
+  handAtNut,
+  fretUnderHand,
+  handFret,
   buildScaleGrid,
   getPositions,
   getShapeGrid,
@@ -50,6 +63,19 @@ const doubleMarker = 12;
 const PAD_L = 70, PAD_T = 74, PAD_R = 30, PAD_B = 24;
 const HANDLE_Y = 14, HANDLE_H = 24;
 const FRET_W = 62, STR_GAP = 46, R = 15; // note-circle radius
+// The capo's bar, and the six bands it is painted in — the same stops as
+// --sunset in styles.css, which is the same sunset the masthead's mark is
+// cut from. Kept here rather than read off the stripe because an SVG
+// gradient wants them one at a time.
+const CAPO_W = 16;
+const CAPO_BANDS = [
+  ["var(--band-1)", 0,    0.17],
+  ["var(--band-2)", 0.17, 0.34],
+  ["var(--band-3)", 0.34, 0.55],
+  ["var(--band-4)", 0.55, 0.72],
+  ["var(--band-5)", 0.72, 0.87],
+  ["var(--band-6)", 0.87, 1],
+];
 // Recomputed rather than fixed, because the number of strings — and so
 // the height of the board — is a property of the instrument, not of the
 // app. `numFrets` and `numStrings` are live bindings from music.js, so
@@ -95,6 +121,10 @@ function el(tag, attrs) {
   return n;
 }
 
+// The fret wire the capo is clamped up against.
+function capoX() {
+  return PAD_L + capoFret * FRET_W;
+}
 // Where a string's own nut sits. Ordinary strings all start at the
 // board's nut; a drone string — a banjo's 5th — starts at its own,
 // partway up the neck, so its whole neighbourhood shifts with it.
@@ -103,9 +133,16 @@ function stringNutX(s) {
   return nutFret ? PAD_L + nutFret * FRET_W : PAD_L;
 }
 // x-center of a note at a given fret (0 = open, sits left of the nut).
-// `s` is only needed for fret 0, to find which nut "left of" means.
+// `s` is only needed for fret 0, to find which nut "left of" means: the
+// board's, a drone string's own, or whatever is clamped to the string —
+// a capo across the neck, a spike beside the 5th. That is the nut the
+// open note now sounds from, so the open markers and the tuning printed
+// with them travel up the neck with the bar and sit just behind it, in
+// the dead frets nothing else can use.
 function fretX(f, s) {
-  return f === 0 ? stringNutX(s) - 34 : PAD_L + (f - 0.5) * FRET_W;
+  if (f !== 0) return PAD_L + (f - 0.5) * FRET_W;
+  const bar = barFret(s);
+  return bar ? PAD_L + bar * FRET_W - 38 : stringNutX(s) - 34;
 }
 // Row of a string, bottom to top — usually the string index itself, but
 // an instrument can say otherwise (see fretboard.js's displayOrder).
@@ -152,12 +189,17 @@ function fretBottomY(f) {
  */
 function playedSpan(grid, box) {
   let lo = null, hi = null;
-  for (let f = box.lo; f <= box.hi; f++) {
+  // A hand at the nut has the open strings under it as well, so the span
+  // has to start at fret 0 to see them — and an open note is played at
+  // the nut, which with a capo on is the bar rather than the end of the
+  // neck. Without one, both of those are fret 0 and nothing changes.
+  for (let f = handAtNut(box.lo) ? 0 : box.lo; f <= box.hi; f++) {
     let used = false;
     for (let s = 0; s < numStrings; s++) if (grid[s][f]) { used = true; break; }
     if (!used) continue;
-    if (lo === null) lo = f;
-    hi = f;
+    const at = handFret(f);
+    if (lo === null) lo = at;
+    hi = at;
   }
   return lo === null ? null : { lo, hi };
 }
@@ -356,6 +398,17 @@ let handleBar   = null;
 let handleLabel = null;
 let highlight   = null;
 let winDrag     = null;   // { grabbedAt } while the handle is held
+// The capo: the shade over the frets it has taken out of play, the bar
+// itself, and the tuning printed beside the nut — which moves with the
+// bar, because the note beside a string is whatever that string sounds.
+let capoShade   = null;
+let capoGroup   = null;
+let openLabels  = [];
+let capoDrag    = null;   // { grabbedAt } while the bar is held
+// The same three things again for each drone string's spike, which is a
+// capo for one string: string -> { group, shade, button }.
+let spikeParts  = new Map();
+let spikeDrag   = null;   // { string, grabbedAt } while a spike is held
 
 // The band the handle currently sits over, and — for scales and
 // arpeggios — where each position starts, so dragging can scrub between
@@ -450,6 +503,12 @@ function drawBoard() {
     }
   }
 
+  // The frets the capo has taken out of play, shaded out under the
+  // strings — the neck is still there behind the bar, there is just
+  // nothing to be played on it.
+  capoShade = el("rect", { class: "capo-shade", x: PAD_L, y: 0, width: 0, height: 0 });
+  svg.appendChild(capoShade);
+
   // Strings, thicker toward the low one at the bottom.
   //
   // A mandolin sounds each note with two strings tuned together, so each
@@ -458,6 +517,7 @@ function drawBoard() {
   // here is the whole of the difference: the marker still sits on the
   // course's centre, because that is where the note is.
   const perCourse = instrument.courses ?? 1;
+  openLabels = [];
   chromaticGrid.forEach((_, i) => {
     const y = stringY(i);
     const nutX = stringNutX(i);
@@ -495,8 +555,95 @@ function drawBoard() {
       "font-size": 13, fill: "var(--muted)", "font-weight": 600,
     });
     lbl.textContent = tuning[i];
+    openLabels[i] = lbl;
     svg.appendChild(lbl);
   });
+
+  // The capo. Drawn over the strings, because that is where it sits, and
+  // under the note markers, the same as the barre — a finger, or a bar,
+  // goes beneath the notes it is holding down.
+  //
+  // It is the page's own sunset stood on end: the six bands, hard-edged,
+  // the same cut as the mark in the masthead. Nothing else on the board
+  // carries all six, so the one object you can pick up and move is the
+  // one wearing the whole palette.
+  const defs = el("defs");
+  const grad = el("linearGradient", { id: "capoBands", x1: 0, y1: 0, x2: 0, y2: 1 });
+  CAPO_BANDS.forEach(([colour, from, to]) => {
+    grad.appendChild(el("stop", { offset: from, "stop-color": colour }));
+    grad.appendChild(el("stop", { offset: to,   "stop-color": colour }));
+  });
+  defs.appendChild(grad);
+  svg.appendChild(defs);
+
+  capoGroup = el("g", { class: "capo" });
+  capoGroup.appendChild(el("rect", {
+    class: "capo-bar", x: -CAPO_W - 5, y: 0, width: CAPO_W, height: 0,
+    rx: CAPO_W / 2, fill: "url(#capoBands)",
+  }));
+  // The screw that holds it on, on the low side of the neck where a
+  // player's capo has one.
+  capoGroup.appendChild(el("circle", {
+    class: "capo-screw", cx: -CAPO_W / 2 - 5, cy: 0, r: 5,
+  }));
+  capoGroup.addEventListener("pointerdown", e => {
+    if (!capoFret) return;
+    capoDrag = { grabbedAt: boardPoint(e).x - capoX() };
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  svg.appendChild(capoGroup);
+
+  // The spike: the capo's bar cut down to the one string the bar can't
+  // reach, wearing the same colours because it is the same object.
+  //
+  // Its pin-head sits in the dead space behind that string's own nut —
+  // out past the end of the short neck, where there is no fretboard and
+  // nothing else is drawn — so it is always in the same place whether
+  // the spike is in or out, and never has to move out of the way of what
+  // it puts on the board.
+  spikeParts = new Map();
+  for (const [s] of droneStrings) {
+    const y = stringY(s);
+
+    const shade = el("rect", { class: "capo-shade", x: 0, y: y - 17, width: 0, height: 34 });
+    svg.appendChild(shade);
+
+    const group = el("g", { class: "capo spike" });
+    group.appendChild(el("rect", {
+      class: "capo-bar", x: -CAPO_W - 5, y: y - 17, width: CAPO_W, height: 34,
+      rx: CAPO_W / 2, fill: "url(#capoBands)",
+    }));
+    group.addEventListener("pointerdown", e => {
+      if (!spikeAt(s)) return;
+      spikeDrag = { string: s, grabbedAt: boardPoint(e).x - (PAD_L + spikeAt(s) * FRET_W) };
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    svg.appendChild(group);
+
+    // The pin itself: a head, and the little hook the string goes under.
+    // Sat under the fret before the string's own nut — the 4th, for a
+    // banjo's 5th string — which is the last patch of board before the
+    // short neck begins and the only place here that stays empty.
+    const bx = PAD_L + (droneStrings.get(s) - 1.5) * FRET_W;
+    const button = el("g", { class: "spike-btn" });
+    button.appendChild(el("circle", { cx: bx, cy: y, r: 9 }));
+    button.appendChild(el("path", {
+      class: "pin", d: `M ${bx - 2} ${y - 4} L ${bx - 2} ${y + 1} Q ${bx - 2} ${y + 4} ${bx + 2} ${y + 4}`,
+    }));
+    button.appendChild(el("title"));
+    // Spiked at the 7th by default, which is where a banjo's first spike
+    // actually is — and the one that goes with a capo at the 2nd, the
+    // pair that puts the whole instrument in A.
+    button.addEventListener("click", () => {
+      moveSpike(s, spikeAt(s) ? 0 : Math.min(7, spikeRange(s).hi));
+      saveSetting("spikes", [...spikeFrets]);
+    });
+    svg.appendChild(button);
+
+    spikeParts.set(s, { group, shade, button });
+  }
 
   // Chord furniture: the barre, and crosses over strings left silent.
   chordLayer = el("g", { id: "chordLayer" });
@@ -554,10 +701,13 @@ function drawBoard() {
   svg.appendChild(windowLayer);
 }
 
-// Where a band from `lo` to `hi` sits in board coordinates.
+// Where a band from `lo` to `hi` sits in board coordinates. A band at the
+// nut reaches back over the open notes, which sit off the end of the
+// neck — or, with a capo on, just behind the bar.
 function bandEdges(lo, hi) {
   return {
-    x1: lo === 0 ? PAD_L - 52 : PAD_L + (lo - 1) * FRET_W,
+    x1: handAtNut(lo) ? (capoFret ? capoX() : PAD_L) - 52
+                      : PAD_L + (lo - 1) * FRET_W,
     x2: PAD_L + Math.min(hi, numFrets) * FRET_W,
   };
 }
@@ -622,6 +772,159 @@ function renderWindowHandle() {
   handleGroup.style.transform = `translate(${x1}px, 0px)`;
   handleBar.setAttribute("width", x2 - x1);
   handleLabel.textContent = `${lo}–${hi}`;
+}
+
+/**
+ * Put everything clamped to the neck where it now is — the capo's bar,
+ * each spike, the shade over the frets they have taken, and the tuning
+ * beside the nut, which is their tuning now.
+ *
+ * Called instead of redrawing the board, so a bar can be dragged without
+ * every marker on the neck being torn down under it. Everything else
+ * lives in the model: the notes have already moved because the grid did.
+ */
+function syncBars() {
+  const on = capoFret > 0;
+  const btn = document.getElementById("capoBtn");
+
+  for (const [s, parts] of spikeParts) {
+    const at = spikeAt(s);
+    parts.group.style.display = at ? "" : "none";
+    parts.shade.style.display = at ? "" : "none";
+    if (at) {
+      const x = PAD_L + at * FRET_W;
+      parts.group.style.transform = `translate(${x}px, 0px)`;
+      // The dead stretch runs from the string's own nut up to the pin —
+      // frets the string has, but cannot sound while it is hooked under.
+      parts.shade.setAttribute("x", stringNutX(s));
+      parts.shade.setAttribute("width", x - stringNutX(s));
+    }
+    parts.button.classList.toggle("on", !!at);
+    parts.button.querySelector("title").textContent = at
+      ? `Spiked at fret ${at} — drag it along, or tap to pull it out`
+      : "Spike the 5th string — a capo for the one string the bar can't reach";
+  }
+
+  if (capoGroup && capoShade) {
+    capoGroup.style.display = on ? "" : "none";
+    capoShade.style.display = on ? "" : "none";
+    if (on) {
+      // Only the rows the bar actually lies across: on a banjo it clamps
+      // the four strings on the neck and passes under the 5th, which is
+      // off the low side of it and goes on droning at pitch.
+      const rows = [];
+      for (let s = 0; s < numStrings; s++) if (capoCovers(s)) rows.push(stringY(s));
+      const top = Math.min(...rows) - 17;
+      const bot = Math.max(...rows) + 17;
+
+      capoGroup.style.transform = `translate(${capoX()}px, 0px)`;
+      const bar = capoGroup.querySelector(".capo-bar");
+      bar.setAttribute("y", top);
+      bar.setAttribute("height", bot - top);
+      capoGroup.querySelector(".capo-screw").setAttribute("cy", bot + 8);
+
+      capoShade.setAttribute("x", PAD_L);
+      capoShade.setAttribute("width", capoX() - PAD_L);
+      capoShade.setAttribute("y", top);
+      capoShade.setAttribute("height", bot - top);
+    }
+  }
+
+  // The open notes have moved, and so has what they are called.
+  openLabels.forEach((lbl, s) => {
+    lbl.setAttribute("x", fretX(0, s));
+    lbl.textContent = tuning[s];
+  });
+
+  if (btn) {
+    btn.textContent = on ? `Fret ${capoFret}` : "Off";
+    btn.classList.toggle("active", on);
+    btn.title = on
+      ? "Drag the capo along the neck, or tap to take it off"
+      : "Clamp a capo on the 1st fret — then drag it where you want it";
+  }
+}
+
+/**
+ * Move the capo, and throw away everything that was measured against
+ * where it used to be.
+ *
+ * The board is not redrawn: the neck hasn't changed, only what can be
+ * played on it, so the markers slide the way they do for any other change
+ * of material. What cannot survive is anything holding a fret — a run
+ * through notes that may no longer exist, a grip edited by hand, and
+ * every cached search, all of which were answers about a different
+ * instrument than the one now under the bar.
+ */
+function moveCapo(fret) {
+  if (fret === capoFret) return;
+  stopSound();
+  const wasAt = capoFret;
+  setCapo(fret);
+
+  clearPath();
+  visibleCells = null;
+  gripEdit = null;
+  ghostCells = new Set();
+  voicingCache = { key: null, whole: null, shell: null };
+  fragmentCache = { key: null, list: [] };
+  progressionCache = { key: null, chords: [] };
+
+  // Where the hand goes when the bar moves under it.
+  //
+  // A hand in the open position is holding the bar's own frets, so it
+  // travels with the bar — that is the whole gesture: slide the capo up
+  // two and the open shapes come with it. A hand further up the neck has
+  // not moved at all, and stays put; the bar only pushes it when it would
+  // otherwise end up behind it.
+  //
+  // What it must NOT do is go looking. seekWindow is for a change of
+  // material — a new chord, where the old stretch of neck may hold
+  // nothing and the nearest one worth having is a better answer than an
+  // empty board. Moving the capo is not that: it is one physical object
+  // sliding one fret, and answering it by throwing the window four frets
+  // up the neck to wherever the best grip happens to live is the window
+  // running away from the bar under your hand.
+  winLo = winLo <= wasAt ? capoFret
+        : Math.max(capoFret, Math.min(lastWindowLo(), winLo));
+  anchorFret = Math.max(capoFret, anchorFret);
+  // A scale's positions ARE renumbered under a moving bar — the boxes
+  // below it stop existing — so there the shape nearest the hand has to
+  // be found again. That search steps to the NEAREST position, not the
+  // best one, so it tracks the bar rather than bolting from it.
+  seekAnchor = !isChordMode() && !isProgressionMode();
+
+  syncBars();
+  syncCagedControls();
+  render();
+}
+
+/**
+ * Move a spike, or pull it out with 0.
+ *
+ * Everything moveCapo throws away, thrown away for the same reason — the
+ * string sounds something else now, so nothing measured against what it
+ * used to sound still describes anything. What it does NOT touch is the
+ * window: a spike holds one string that the fretting hand never goes
+ * near, so the hand has not moved and neither should what it is looking
+ * at.
+ */
+function moveSpike(string, fret) {
+  if (fret === spikeAt(string)) return;
+  stopSound();
+  setSpike(string, fret);
+
+  clearPath();
+  visibleCells = null;
+  gripEdit = null;
+  ghostCells = new Set();
+  voicingCache = { key: null, whole: null, shell: null };
+  fragmentCache = { key: null, list: [] };
+  progressionCache = { key: null, chords: [] };
+
+  syncBars();
+  syncCagedControls();
+  render();
 }
 
 // ============================================================
@@ -934,6 +1237,27 @@ function beginDrag(evt, cell) {
 }
 
 function onDragMove(evt) {
+  // The capo slides from fret to fret. It snaps rather than easing: a
+  // capo is clamped behind a particular fret, and there is nowhere
+  // between two of them for it to be.
+  if (capoDrag) {
+    const x = boardPoint(evt).x - capoDrag.grabbedAt;
+    const fret = Math.round((x - PAD_L) / FRET_W);
+    // Never off the neck at the top, and never back to the nut — taking
+    // it off is the button's job, not something a drag should do by
+    // accident on the way past the 1st fret.
+    moveCapo(Math.max(1, Math.min(maxCapoFret(), fret)));
+    return;
+  }
+  // A spike slides the same way, between its own string's nut and as far
+  // up as a capo could go.
+  if (spikeDrag) {
+    const x = boardPoint(evt).x - spikeDrag.grabbedAt;
+    const fret = Math.round((x - PAD_L) / FRET_W);
+    const { lo, hi } = spikeRange(spikeDrag.string);
+    moveSpike(spikeDrag.string, Math.max(lo, Math.min(hi, fret)));
+    return;
+  }
   // The handle slides along the neck. For chords that moves a fixed
   // window; for scales and arpeggios it steps to whichever position
   // starts nearest, so each shape keeps its own width.
@@ -957,7 +1281,7 @@ function onDragMove(evt) {
         render();
       }
     } else {
-      const lo = Math.max(0, Math.min(lastWindowLo(), fret));
+      const lo = Math.max(capoFret, Math.min(lastWindowLo(), fret));
       if (lo !== winLo) {
         winLo = lo;
         posIndex = 0;
@@ -1022,6 +1346,16 @@ function onDragMove(evt) {
 }
 
 function endDrag() {
+  if (capoDrag) {
+    capoDrag = null;
+    saveSetting("capo", capoFret);
+    return;
+  }
+  if (spikeDrag) {
+    spikeDrag = null;
+    saveSetting("spikes", [...spikeFrets]);
+    return;
+  }
   if (winDrag) { winDrag = null; return; }
   if (!drag) return;
   const moved = drag.moved;
@@ -1757,8 +2091,13 @@ const isProgressionMode = () =>
 // preset rather than per render — the search is cheap but not free, and
 // nothing about it changes while you step through the chords.
 let progressionCache = { key: null, chords: [] };
+// What makes a route the route it is. Written once because render asks
+// the same question of it — whether the route on screen is still the one
+// being stepped through — and two spellings of this that drift apart
+// leave the stepper resetting to the first chord on every draw.
+const progressionKey = (root, type, at) => `${root}|${type}|${barsKey()}|${at}`;
 function progressionFor(key, name, window = null) {
-  const cacheKey = `${key}|${name}|${window ? window.lo : "free"}`;
+  const cacheKey = progressionKey(key, name, window ? window.lo : "free");
   if (progressionCache.key !== cacheKey) {
     progressionCache = { key: cacheKey, chords: progressionVoicings(key, name, { window }) };
   }
@@ -1828,10 +2167,13 @@ function effectiveVoicing(root, type, voicing) {
  *     in the voicing search already treat it this way; this is the last
  *     place that didn't, and it was quietly throwing away most of the
  *     grips on the instrument — every one that lets the 5th string ring.
+ *
+ * Otherwise an open string is inside the window when the window is at the
+ * nut, which with a capo on means at the bar — see fretUnderHand.
  */
 function cellFitsWindow(c, lo, hi) {
   return (c.fret === 0 && (openOn || droneStrings.has(c.string))) ||
-         (c.fret >= lo && c.fret <= hi);
+         fretUnderHand(c.fret, lo, hi);
 }
 
 function gripFitsWindow(voicing, lo, hi) {
@@ -1854,7 +2196,7 @@ function gripFitsWindow(voicing, lo, hi) {
  */
 function seekWindow(voicings, type, anchor) {
   const last = lastWindowLo();
-  const want = Math.max(0, Math.min(last, anchor));
+  const want = Math.max(capoFret, Math.min(last, anchor));
   if (!voicings.length) return want;
 
   const within = lo =>
@@ -1868,7 +2210,7 @@ function seekWindow(voicings, type, anchor) {
   // neck is judged by the best grip in it, with distance only breaking
   // ties between places that are otherwise as good as each other.
   let best = want, bestCost = Infinity;
-  for (let lo = 0; lo <= last; lo++) {
+  for (let lo = capoFret; lo <= last; lo++) {
     const here = within(lo);
     if (!here.length) continue;
     const top = rankVoicings(here, type, { limit: 1 })[0];
@@ -1952,7 +2294,9 @@ function toggleGripNote(pos) {
  */
 let voicingCache = { key: null, whole: null, shell: null };
 function voicingsFor(root, type, openAnywhere, { relaxed = false } = {}) {
-  const key = `${root}|${type}|${openAnywhere}`;
+  // The capo is part of the question: it changes what every string can
+  // sound, so grips found under one are not answers about another.
+  const key = `${root}|${type}|${openAnywhere}|${barsKey()}`;
   if (voicingCache.key !== key) voicingCache = { key, whole: null, shell: null };
   const slot = relaxed ? "shell" : "whole";
   // The shell search is a second walk of the whole neck, so it is only
@@ -1974,7 +2318,7 @@ function voicingsFor(root, type, openAnywhere, { relaxed = false } = {}) {
  */
 let fragmentCache = { key: null, list: [] };
 function fragmentsFor(root, type, lo, hi, openAnywhere) {
-  const key = `${root}|${type}|${openAnywhere}|${lo}|${hi}`;
+  const key = `${root}|${type}|${openAnywhere}|${barsKey()}|${lo}|${hi}`;
   if (fragmentCache.key !== key) {
     fragmentCache = { key, list: fragmentVoicings(root, type, { lo, hi, openAnywhere }) };
   }
@@ -1998,7 +2342,7 @@ function renderChord(root, type, voicing, ghostRange) {
     // the nut as well, since those tones are on offer from anywhere.
     const frets = ghostRange.open ? [0] : [];
     for (let f = Math.max(ghostRange.lo, 1); f <= ghostRange.hi; f++) frets.push(f);
-    if (ghostRange.lo === 0 && !ghostRange.open) frets.unshift(0);
+    if (handAtNut(ghostRange.lo) && !ghostRange.open) frets.unshift(0);
     for (let s = 0; s < numStrings; s++) {
       for (const f of frets) {
         if (!full[s][f]) continue;
@@ -2092,14 +2436,14 @@ function render({ animate = true } = {}) {
   if (isProgressionMode()) {
     // Coming from a scale, the progression opens where the hand was left.
     if (seekAnchor) {
-      winLo = Math.max(0, Math.min(lastWindowLo(), anchorFret));
+      winLo = Math.max(capoFret, Math.min(lastWindowLo(), anchorFret));
       seekAnchor = false;
     }
     const winHi = winLo + windowWidth() - 1;
 
     // A new key, preset or stretch of neck is a new route; show it from
     // its first chord.
-    if (progressionCache.key !== `${root}|${type}|${winLo}`) posIndex = 0;
+    if (progressionCache.key !== progressionKey(root, type, winLo)) posIndex = 0;
     const chords = progressionFor(root, type, { lo: winLo, hi: winHi });
     // Nothing but the grip is drawn, so the board starts empty rather
     // than from a scale: the progression's name is not a chord type and
@@ -2535,8 +2879,10 @@ function switchInstrument(id) {
   voicingCache = { key: null, whole: null, shell: null };
   progressionCache = { key: null, chords: [] };
   posIndex = 0;
-  winLo = 0;
-  anchorFret = 0;
+  // The capo came along to the new instrument (clamped to its neck if it
+  // had to be), so the hand still starts at the bar rather than the nut.
+  winLo = capoFret;
+  anchorFret = capoFret;
   cagedOn = false;
   activeBand = null;
   activeStops = null;
@@ -2549,6 +2895,7 @@ function switchInstrument(id) {
   lineShown = false;
 
   drawBoard();
+  syncBars();
   const kind = fillKindMenu();
   fillMaterialMenu(kind);
   syncMasthead();
@@ -2705,6 +3052,13 @@ function initControls() {
   spread.addEventListener("input", showSpread);
   showSpread();
 
+  // On at the 1st fret, off again from wherever it got to. Where it goes
+  // in between is a drag along the neck, not a control — see moveCapo.
+  document.getElementById("capoBtn").addEventListener("click", () => {
+    moveCapo(capoFret ? 0 : 1);
+    saveSetting("capo", capoFret);
+  });
+
   document.getElementById("openBtn").addEventListener("click", () => {
     openOn = !openOn;
     posIndex = 0;   // a different set of grips — start at the top of it
@@ -2752,6 +3106,18 @@ function initControls() {
 if (saved.instrument && saved.instrument !== instrument.id && INSTRUMENTS[saved.instrument]) {
   setInstrument(saved.instrument);
 }
+// A capo is left on the instrument between sessions, the same as it is
+// left on a real one. The grid has to know before anything is drawn.
+if (saved.capo) {
+  setCapo(saved.capo);
+  winLo = capoFret;
+  anchorFret = capoFret;
+}
+// A spike is driven into the fretboard and stays there — more permanently
+// than a capo, if anything. setSpike ignores any that don't belong to this
+// instrument's drone strings, so a banjo's survives a trip to the guitar.
+for (const [s, f] of saved.spikes ?? []) setSpike(Number(s), f);
 
 drawBoard();
+syncBars();
 initControls();

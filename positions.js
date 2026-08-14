@@ -10,7 +10,7 @@
 import { noteToPc, getScalePcs, midiToPc } from "./theory.js";
 import {
   instrument, chromaticGrid, numFrets, numStrings, droneStrings,
-  buildScaleGrid, tightSpan, positionSpan,
+  buildScaleGrid, tightSpan, positionSpan, capoFret, fretUnderHand, handFret,
 } from "./fretboard.js";
 
 // ============================================================
@@ -70,21 +70,25 @@ export function cagedPositions(root, type) {
   if (!supportsCaged(type)) return [];
 
   // Resolve the parent major, then find its root on the low-E string.
+  // chromaticGrid[0][0] is that string's open note as it actually sounds,
+  // so under a capo this measures from the capo — and the fret it names
+  // has to be counted from there too, since the shapes sit on the neck by
+  // fret number and the bar has moved where "open" is.
   const parentPc  = ((noteToPc(root) - MODE_TO_PARENT[type]) % 12 + 12) % 12;
-  const rootFret6 = ((parentPc - chromaticGrid[0][0]) % 12 + 12) % 12;
+  const rootFret6 = capoFret + ((parentPc - chromaticGrid[0][0]) % 12 + 12) % 12;
 
   const boxes = [];
   const seen = new Set();
   for (let octave = -1; octave <= 2; octave++) {
     for (const t of CAGED_TEMPLATES) {
       let lo = rootFret6 + t.offset + 12 * octave;
-      // The nut is a hard boundary. A shape reaching just one fret below
-      // it still works, because open strings stand in for that fret --
-      // this is what puts the G shape at 0-4 in open position. Anything
-      // further below the nut genuinely doesn't fit and is skipped; it
-      // will reappear an octave higher.
-      if (lo === -1) lo = 0;
-      if (lo < 0) continue;
+      // The nut — or the capo, which is the nut now — is a hard boundary.
+      // A shape reaching just one fret below it still works, because open
+      // strings stand in for that fret; this is what puts the G shape at
+      // 0-4 in open position. Anything further below genuinely doesn't
+      // fit and is skipped; it will reappear an octave higher.
+      if (lo === capoFret - 1) lo = capoFret;
+      if (lo < capoFret) continue;
       const hi = lo + t.span - 1;
       if (hi > numFrets) continue;             // ran off the high end
       const key = `${lo}-${hi}`;
@@ -97,10 +101,12 @@ export function cagedPositions(root, type) {
   return boxes;
 }
 
-// Null out every cell outside a fret-window box.
+// Null out every cell outside a fret-window box. The open notes belong to
+// a box that reaches the nut — or the capo — which is what fretUnderHand
+// decides; everything else is simply inside the fret range or not.
 function maskToBox(grid, box) {
   return grid.map(row =>
-    row.map((cell, f) => (cell && f >= box.lo && f <= box.hi) ? cell : null)
+    row.map((cell, f) => (cell && fretUnderHand(f, box.lo, box.hi)) ? cell : null)
   );
 }
 
@@ -190,7 +196,9 @@ export function inspectBox(grid, pcs, lo, hi) {
     if (pcs.has(midiToPc(p)) && !have.has(p)) gaps++;
   }
   const covered = new Set(cells.map(c => c.pc));
-  const frets = cells.map(c => c.fret);
+  // Measured where the hand is: an open note is played at the nut, and
+  // under a capo the nut is the bar. Without one this is fret 0 either way.
+  const frets = cells.map(c => handFret(c.fret));
   return {
     // Trimmed to the frets actually played: a box can open on a fret
     // nothing lands on, and that dead edge is not part of the position.
@@ -248,7 +256,8 @@ export function generalPositions(root, type) {
   const boxes = [];
   const seen = new Set();
   const tight = tightSpan(), full = positionSpan();
-  for (let lo = 0; lo <= numFrets - tight + 1; lo++) {
+  // Nothing below the capo is playable, so no hand starts there.
+  for (let lo = capoFret; lo <= numFrets - tight + 1; lo++) {
     for (const span of [tight, full]) {
       const hi = lo + span - 1;
       if (hi > numFrets) continue;

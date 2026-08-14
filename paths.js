@@ -13,7 +13,7 @@
 // ============================================================
 
 import { noteToPc, getScalePcs, midiToPc } from "./theory.js";
-import { numFrets, numStrings, openMidi, droneStrings, midiAt, buildScaleGrid, positionSpan, tightSpan } from "./fretboard.js";
+import { numFrets, numStrings, openMidi, droneStrings, midiAt, buildScaleGrid, positionSpan, tightSpan, capoFret, barFret, fretUnderHand, handFret } from "./fretboard.js";
 import { generalPositions, supportsCaged, cagedPositions, inspectBox, boxIsPlayable } from "./positions.js";
 
 // Four notes on a string is the comfortable maximum, but it is a
@@ -75,9 +75,9 @@ function findPath(root, type, from, to, only = null) {
   // narrowest first, and lowest among equals. Only when no such window
   // can hold the run does the search open up and allow the hand to move.
   for (let width = pathHand(); width <= pathMaxWindow(); width++) {
-    for (let lo = 0; lo + width - 1 <= numFrets; lo++) {
+    for (let lo = capoFret; lo + width - 1 <= numFrets; lo++) {
       const hi = lo + width - 1;
-      const holds = c => c.fret === 0 ? lo === 0 : (c.fret >= lo && c.fret <= hi);
+      const holds = c => fretUnderHand(c.fret, lo, hi);
       if (!holds(from) || !holds(to)) continue;
       const run = searchPath(root, type, from, to, only, { lo, hi });
       if (run) return run;
@@ -287,17 +287,17 @@ function searchPath(root, type, from, to, only, window) {
     // Inverting midiAt. A drone string's frets are numbered from the
     // board's nut but counted from its own, so the fret sounding a given
     // pitch sits that distance further up — and its open note is fret 0
-    // however far up the neck the string itself starts.
+    // however far up the neck the string itself starts, capo or no capo.
     const nut = droneStrings.get(s) ?? 0;
-    const f = pitch === openMidi[s] ? 0 : pitch - openMidi[s] + nut;
+    const f = pitch === midiAt(s, 0) ? 0 : pitch - openMidi[s] + nut;
     if (f < 0 || f > numFrets) return null;
     // A drone string sounds open, or fretted from its own nut on up —
-    // never in between, since the string simply doesn't reach there.
-    if (f > 0 && f <= nut) return null;
+    // never in between, since the string simply doesn't reach there. And
+    // behind a capo or a spike is the same kind of nowhere: the string
+    // starts at the bar, so nothing below it sounds at all.
+    if (f > 0 && f <= Math.max(nut, barFret(s))) return null;
     if (only && !only.has(`${s}:${f}`)) return null;   // outside the shape
-    if (window) {                                      // outside the hand
-      if (f === 0 ? window.lo !== 0 : (f < window.lo || f > window.hi)) return null;
-    }
+    if (window && !fretUnderHand(f, window.lo, window.hi)) return null;
     return f;
   };
 
@@ -320,12 +320,13 @@ function searchPath(root, type, from, to, only, window) {
   const reach = (anchor, fret) => {
     // Anything under the hand is free, open strings included — which is
     // what makes the open position, hand at the nut, come out free.
-    if (fret >= anchor && fret <= anchor + HAND - 1) return { anchor, cost: 0 };
+    const at = handFret(fret);
+    if (at >= anchor && at <= anchor + HAND - 1) return { anchor, cost: 0 };
     // An open string needs no finger, so the hand never moves for one.
     // It still counts against a run whose hand is elsewhere, since
     // dropping to the nut mid-phrase is leaving the position.
     if (fret === 0) return { anchor, cost: PATH_OPEN_PENALTY };
-    const moved = fret < anchor ? fret : fret - (HAND - 1);
+    const moved = at < anchor ? at : at - (HAND - 1);
     return { anchor: moved, cost: PATH_SHIFT_PENALTY + Math.abs(moved - anchor) };
   };
 
@@ -336,7 +337,7 @@ function searchPath(root, type, from, to, only, window) {
   // with the index finger or the pinky. Every placement that reaches it
   // is a legitimate way to begin, so the search weighs them all.
   let layer = new Map();
-  for (let anchor = 0; anchor <= maxAnchor; anchor++) {
+  for (let anchor = capoFret; anchor <= maxAnchor; anchor++) {
     if (from.fret !== 0 && (from.fret < anchor || from.fret > anchor + HAND - 1)) continue;
     const st = { cost: 0, prev: null, string: from.string, fret: from.fret, run: 1, anchor };
     layer.set(stateKey(st), st);
@@ -350,7 +351,8 @@ function searchPath(root, type, from, to, only, window) {
 
       // Stay on this string.
       const sameFret = fretFor(sequence[i], state.string);
-      if (sameFret !== null && Math.abs(sameFret - state.fret) <= PATH_MAX_STEP) {
+      if (sameFret !== null &&
+          Math.abs(handFret(sameFret) - handFret(state.fret)) <= PATH_MAX_STEP) {
         const r = reach(state.anchor, sameFret);
         const stretch = r.cost > 0 ? PATH_STRETCH_PENALTY : 0;
         const crowd = state.run + 1 > crowdingFrom ? PATH_CROWD_PENALTY : 0;
