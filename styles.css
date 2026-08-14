@@ -338,6 +338,35 @@ select {
 select:hover { border-color: var(--line-hover); }
 option { background: var(--chip); color: var(--text); }
 
+/* ---- Typing a progression ---------------------------------- */
+/* Sits in the row of menus and has to look like one of them — same
+   chip, same border, same height. What is typed into it is chord
+   symbols, so it is set in the same tabular face the readouts use:
+   Am7 and D7 line up under each other instead of drifting. */
+#progEdit { display: none; }
+#progEdit.on { display: flex; }
+
+#progInput {
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 12px;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  color: var(--text);
+  border: 1.5px solid var(--line);
+  border-radius: var(--r);
+  background: var(--chip);
+}
+
+#progInput:hover { border-color: var(--line-hover); }
+#progInput::placeholder { color: var(--muted); opacity: 0.7; }
+
+/* What the line was understood to say, spelled out in the current key —
+   which is the whole answer to "did it read what I meant". */
+#progReadout { color: var(--readout-strong); }
+#progReadout.unread { color: var(--band-1); }
+
 /* ---- Buttons ----------------------------------------------- */
 /* Flat chips, uppercase and spaced out. Nothing gradients, nothing
    glows: the colour does the talking. */
@@ -465,6 +494,11 @@ input[type="range"]::-moz-range-thumb {
   border: 1.5px solid var(--bg);
 }
 
+/* The tempo is the one thing here worth dragging slowly, and it now
+   covers 30 to 400 — so it gets the room to be set to a number rather
+   than to a region. */
+.slider-wide input[type="range"] { width: 210px; }
+
 /* ---- Readouts ---------------------------------------------- */
 /* Everything the app reports back — fret ranges, note counts, tempo —
    is set in one tabular face, so numbers line up and don't jitter as
@@ -479,8 +513,14 @@ input[type="range"]::-moz-range-thumb {
 }
 
 #posLabel { min-width: 200px; text-align: center; color: var(--readout-strong); }
-#bpmLabel { min-width: 22px; }
+#bpmLabel { min-width: 30px; }
 #spreadLabel { min-width: 44px; }
+
+/* The count. Wide enough for "count 4" so the bar number doesn't shuffle
+   sideways as the beat changes under it. */
+#beatReadout { min-width: 74px; color: var(--readout-strong); }
+/* Counting in reads as the thing it is: not the music yet. */
+#beatReadout.counting { color: var(--band-1); }
 
 /* A hand-built grip that no hand can hold. Said plainly rather than
    forbidden — the notes are yours to choose. */

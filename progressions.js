@@ -12,12 +12,20 @@
 // it leaves the hand where the next chord needs it.
 // ============================================================
 
-import { MAJOR_SCALE, spellScale } from "./theory.js";
-import { instrument, droneStrings, capoFret, fretUnderHand } from "./fretboard.js";
+import { MAJOR_SCALE, spellScale, spellOn, letterAt, noteToPc, midiToPc } from "./theory.js";
+import { instrument, droneStrings, capoFret, fretUnderHand, midiAt } from "./fretboard.js";
 import { chordVoicings, rankVoicings, fragmentVoicings } from "./voicings.js";
+import { chordSymbol } from "./symbols.js";
+
+// The name the player's own progression goes under. A name rather than a
+// flag because that is all a progression is to everything downstream —
+// the menu, the cache key, the solver all take one and ask for its
+// chords, and where those chords came from is this file's business.
+export const CUSTOM_PROGRESSION = "Custom";
 
 export const progressionGroups = {
   "Presets": ["I – IV – V", "ii – V – I"],
+  "Your own": [CUSTOM_PROGRESSION],
 };
 
 // Written in scale degrees so they transpose to any key by construction.
@@ -36,23 +44,48 @@ const PROGRESSIONS = {
   ],
 };
 
-/** How a chord is written above a stave, rather than what it is called. */
-const CHORD_SYMBOL = {
-  "Major Triad": "", "Minor Triad": "m", "Diminished Triad": "°",
-  "Augmented Triad": "+", "Major 7": "maj7", "Minor 7": "m7",
-  "Dominant 7": "7", "Minor 7b5": "m7b5", "Diminished 7": "°7",
-};
+// ------------------------------------------------------------
+// THE PLAYER'S OWN
+//
+// A progression the player typed, parsed into the same steps a preset is
+// written in — see symbols.js, which does the reading. It lives here as
+// module state for the same reason the instrument and the tuning do:
+// there is one of it, everything downstream asks what it is rather than
+// being handed it, and a progression is a thing you have set up rather
+// than an argument to a function.
+//
+// A typed progression may be written either way round, and the two mix
+// freely. "Am F C G" names its own chords, and the key does nothing to
+// it. "vi IV I V" names degrees, and is the same progression in whatever
+// key is chosen — which is what the presets are, and why they transpose.
+// ------------------------------------------------------------
+let customSteps = [];
 
-function chordSymbol(root, type) {
-  return root + (CHORD_SYMBOL[type] ?? ` ${type}`);
+/** Hand over a parsed progression. @param {Array} steps from parseProgression */
+export function setCustomProgression(steps) {
+  customSteps = steps ?? [];
+}
+
+/** What is in it now, for anything caching by it. */
+export function customProgressionKey() {
+  return customSteps.map(s =>
+    `${s.root ?? ""}${s.numeral ?? ""}${s.alter ?? ""}:${s.type}:${s.bass ?? ""}`).join("|");
 }
 
 /** The chords of a progression in a key, spelled from its major scale. */
 export function progressionSteps(key, name) {
+  const source = name === CUSTOM_PROGRESSION ? customSteps : (PROGRESSIONS[name] ?? []);
   const spelling = spellScale(key, MAJOR_SCALE);
-  return (PROGRESSIONS[name] ?? []).map(step => {
-    const root = spelling[step.degree - 1];
-    return { ...step, root, symbol: chordSymbol(root, step.type) };
+  return source.map(step => {
+    // A chord that named its own root keeps it; one written as a degree
+    // takes the key's. An altered degree — bVII, #IV — keeps the letter
+    // the degree lands on and moves the accidental, so the flat seventh
+    // of C is Bb and not the A# it sounds the same as.
+    const plain = step.root ?? spelling[step.degree - 1];
+    const root = step.alter
+      ? spellOn(noteToPc(plain) + step.alter, letterAt(key, step.degree))
+      : plain;
+    return { ...step, root, symbol: step.symbol ?? chordSymbol(root, step.type, step.bass) };
   });
 }
 
@@ -64,7 +97,32 @@ export function progressionSteps(key, name) {
  * the neck is divided into stretches and the best of each is taken —
  * giving the sequence a real choice of where to be.
  */
-function candidatesAcrossNeck(root, type, perRegion = 2) {
+/**
+ * The chord over a named bass — the slash in C/G — kept where it can be.
+ *
+ * A slash chord is a real instruction: it says which note is underneath,
+ * and on a guitar that is usually the whole reason the chord is written
+ * that way. So grips whose lowest sounding note is that note are the
+ * only ones offered, when there are any.
+ *
+ * When there are none it is dropped rather than the chord being. Inside
+ * a five-fret window there are stretches of neck where the bass simply
+ * isn't available under the chord, and a progression that loses a whole
+ * chord to a preference is worse than one that plays it in a different
+ * inversion — the same trade the shell and the fragment already make.
+ */
+function overBass(list, bass) {
+  if (!bass) return list;
+  const wanted = noteToPc(bass);
+  const onBass = list.filter(v => {
+    const low = v.cells.reduce((a, c) =>
+      midiAt(c.string, c.fret) < midiAt(a.string, a.fret) ? c : a, v.cells[0]);
+    return low && midiToPc(midiAt(low.string, low.fret)) === wanted;
+  });
+  return onBass.length ? onBass : list;
+}
+
+function candidatesAcrossNeck(root, type, bass, perRegion = 2) {
   const all = chordVoicings(root, type, { stacked: false, openAnywhere: false });
 
   // An open string rings whatever the hand is doing, so a grip mixing
@@ -85,7 +143,7 @@ function candidatesAcrossNeck(root, type, perRegion = 2) {
   // neck. Three frets to a bucket sounds harmless and isn't: the grips
   // starting at the third fret crowd out the ones starting at the fifth,
   // so a hand asking for the fifth is offered the third and drifts.
-  return bestPerStartingFret(grounded, type, perRegion);
+  return bestPerStartingFret(overBass(grounded, bass), type, perRegion);
 }
 
 /**
@@ -111,7 +169,7 @@ function candidatesAcrossNeck(root, type, perRegion = 2) {
  * rings from its own nut wherever the hand is, so it is never out of
  * bounds.
  */
-function candidatesInWindow(root, type, { lo, hi }, perRegion = 2) {
+function candidatesInWindow(root, type, bass, { lo, hi }, perRegion = 2) {
   const fits = v => v.cells.every(c =>
     (c.fret === 0 && droneStrings.has(c.string)) || fretUnderHand(c.fret, lo, hi));
 
@@ -120,7 +178,7 @@ function candidatesInWindow(root, type, { lo, hi }, perRegion = 2) {
   if (!here.length) here = search({ relaxed: true }).filter(fits);
   if (!here.length) here = fragmentVoicings(root, type, { lo, hi });
 
-  return bestPerStartingFret(here, type, perRegion);
+  return bestPerStartingFret(overBass(here, bass), type, perRegion);
 }
 
 /**
@@ -203,8 +261,8 @@ export function progressionVoicings(key, name, { ease = 1, window = null } = {})
   if (!steps.length) return [];
 
   const columns = steps.map(s => window
-    ? candidatesInWindow(s.root, s.type, window)
-    : candidatesAcrossNeck(s.root, s.type));
+    ? candidatesInWindow(s.root, s.type, s.bass, window)
+    : candidatesAcrossNeck(s.root, s.type, s.bass));
   if (columns.some(c => c.length === 0)) return [];
 
   // Nothing here prices the window any more. It used to be a cost — a

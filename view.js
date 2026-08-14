@@ -60,11 +60,19 @@ import {
   fragmentVoicings,
   rankVoicings,
   progressionVoicings,
+  progressionSteps,
+  parseProgression,
+  setCustomProgression,
+  customProgressionKey,
+  CUSTOM_PROGRESSION,
   hasOpenVoicing,
   gripFingering,
 } from "./music.js";
 
-import { unlock, playSequence, playChord, playProgression, strumGap, clock } from "./audio.js";
+import {
+  unlock, playSequence, playChord, playProgression, strumGap, clock,
+  setTempo, setMetronome, metronomeOn, onCount, PHRASE_BARS,
+} from "./audio.js";
 
 // ---- Visual config ----------------------------------------
 const markerFrets = [3, 5, 7, 9, 15, 17];   // single inlay dots
@@ -1988,7 +1996,14 @@ function startPlayhead(cells, startsAt, gap) {
   const step = () => {
     // Where we are in notes, not in pixels: 2.5 means halfway from the
     // third note to the fourth.
-    let pos = Math.max(0, (clock() - startsAt) / gap);
+    //
+    // Negative before the first note, and left that way on purpose. A
+    // count-in puts the playhead on the board a bar before there is
+    // anything to hear, and clamping this to zero lit the first note and
+    // held it lit through the count — a run that had started when it
+    // hadn't. Below zero every test here comes out dark, which is the
+    // truth: armed, waiting for the beat.
+    let pos = (clock() - startsAt) / gap;
     // Asked for less movement: the light steps from note to note instead
     // of sliding between them, so it still says where the run is up to
     // without anything gliding.
@@ -2041,6 +2056,61 @@ function showSounding(next) {
   soundingAt = next;
 }
 
+// ---- The practice bench -----------------------------------
+// A metronome, a time signature, a bar counted in front, and a loop that
+// comes round in four-bar phrases. Everything here is about time rather
+// than about notes, which is why the tempo itself lives down in audio.js
+// with the clock the notes are scheduled against — these are only the
+// switches.
+let countInOn = false;
+let loopOn    = false;
+
+const beatsPerBar = () => Number(document.getElementById("meter")?.value) || 4;
+const chosenBpm   = () => Number(document.getElementById("bpm")?.value) || 80;
+
+/** Hand the transport whatever the controls currently say. */
+function applyTempo() {
+  setTempo({ bpm: chosenBpm(), beatsPerBar: beatsPerBar() });
+}
+
+/**
+ * Where the beat is, said plainly.
+ *
+ * During the count-in it counts — that is the whole job, and a bar of
+ * clicks with nothing on screen explaining them is a bar of confusion.
+ * Once the music starts it says which bar of the phrase you are in,
+ * which is what you want to know when the same four bars are coming
+ * round again.
+ */
+function showCount(at) {
+  const out = document.getElementById("beatReadout");
+  if (!out) return;
+  if (!at) { out.textContent = ""; out.classList.remove("counting"); return; }
+  out.classList.toggle("counting", at.countIn);
+  out.textContent = at.countIn ? `count ${at.beat}` : `${at.bar}.${at.beat}`;
+}
+
+function syncPractice() {
+  const metro = document.getElementById("metroBtn");
+  metro.classList.toggle("active", metronomeOn());
+  metro.title = metronomeOn() ? "Stop the click" : "A click at the tempo below";
+
+  const count = document.getElementById("countInBtn");
+  count.classList.toggle("active", countInOn);
+  // Under a loop the bar is there whether or not this is on, so the
+  // button says so rather than appearing to do nothing.
+  count.title = loopOn
+    ? "A loop counts itself in every time round, whatever this says"
+    : countInOn ? "A bar is counted in before it starts"
+                : "Start straight away, with no count";
+
+  const loop = document.getElementById("loopBtn");
+  loop.classList.toggle("active", loopOn);
+  loop.title = loopOn
+    ? `Round and round in ${PHRASE_BARS}-bar phrases, a bar counted in each time`
+    : "Play it once";
+}
+
 /** Stop whatever is playing, whichever kind it was. */
 function stopSound() {
   const p = player;
@@ -2065,17 +2135,31 @@ async function playRun() {
   // Has to happen inside the click that called this, or the browser
   // leaves the context suspended and nothing sounds.
   if (!(await unlock())) return;
+  applyTempo();
 
-  const bpm = Number(document.getElementById("bpm")?.value) || 80;
   const notes = pathResult.cells.map(c => ({
     midi: c.midi ?? pitchAt(c),
     string: c.string,
     key: cellId(c),
   }));
 
+  // Filled in the moment the player exists — the first pass is drawn by
+  // the call below it, and every later one by this.
+  let gap = 0;
   player = playSequence(notes, {
-    bpm,
+    countIn: countInOn,
+    loop: loopOn,
     onNote: n => showSounding(n ? new Set([n.key]) : new Set()),
+    // Each time round, the light starts again with the sound — the
+    // playhead is a reading of one schedule, and a loop is a new one
+    // every pass.
+    onPass: (startsAt, pass) => {
+      if (pass === 0) return;
+      // Nothing is sounding yet — the pass begins on the count, not on
+      // the first note, and the last note of the pass before is over.
+      showSounding(new Set());
+      startPlayhead(pathResult.cells, startsAt, gap);
+    },
     onEnd: () => {
       player = null; playerKind = null;
       // The light is left to finish. The last note is still ringing when
@@ -2090,7 +2174,8 @@ async function playRun() {
   // Drawn against the same schedule the notes were scheduled on, so the
   // light and the sound are two readings of one clock rather than two
   // timers that happen to have been started together.
-  startPlayhead(pathResult.cells, player.startsAt, player.gap);
+  gap = player.gap;
+  startPlayhead(pathResult.cells, player.startsAt, gap);
   playerKind = "run";
   syncPlayButton();
 }
@@ -2165,6 +2250,7 @@ async function playProgressionThrough() {
   const chords = progressionCache.chords;
   if (!chords.length) return;
   if (!(await unlock())) return;
+  applyTempo();
 
   const t = Number(document.getElementById("spread")?.value ?? 60) / 100;
   const groups = chords.map(v => v.cells.slice()
@@ -2173,10 +2259,21 @@ async function playProgressionThrough() {
 
   player = playProgression(groups, {
     gap: strumGap(t),
+    countIn: countInOn,
+    loop: loopOn,
     onChord: c => {
       posIndex = c;
       render();
       showSounding(new Set(groups[c].map(n => n.key)));
+    },
+    // Counted in again: nothing is sounding, and the board goes back to
+    // the first grip so the chord you are about to play is the one under
+    // your eyes while you count.
+    onPass: (_, pass) => {
+      if (pass === 0) return;
+      showSounding(new Set());
+      posIndex = 0;
+      render();
     },
     onEnd: () => {
       player = null; playerKind = null; playingSig = null;
@@ -2217,13 +2314,82 @@ let progressionCache = { key: null, chords: [] };
 // the same question of it — whether the route on screen is still the one
 // being stepped through — and two spellings of this that drift apart
 // leave the stepper resetting to the first chord on every draw.
-const progressionKey = (root, type, at) => `${root}|${type}|${neckKey()}|${at}`;
+// The player's own progression is a route like any other, and its chords
+// are part of what makes it that route — so what was typed goes in the
+// key. Without it, editing the line would be answered from the cache
+// with the progression before the edit.
+const progressionKey = (root, type, at) =>
+  `${root}|${type}|${customProgressionKey()}|${neckKey()}|${at}`;
 function progressionFor(key, name, window = null) {
   const cacheKey = progressionKey(key, name, window ? window.lo : "free");
   if (progressionCache.key !== cacheKey) {
     progressionCache = { key: cacheKey, chords: progressionVoicings(key, name, { window }) };
   }
   return progressionCache.chords;
+}
+
+// ---- Writing your own -------------------------------------
+/** Is the progression menu on the one the player writes? */
+const isCustomProgression = () =>
+  isProgressionMode() && document.getElementById("scale").value === CUSTOM_PROGRESSION;
+
+/**
+ * Read what has been typed, and put it on the board.
+ *
+ * A line half-written is a line with a word in it that isn't a chord
+ * yet — "Am7 D" on the way to "Am7 Dm" — and rebuilding the board from
+ * the half of it that parses would have chords appearing and vanishing
+ * under the fingers as the player types. So a line that doesn't read
+ * whole leaves the board alone and says so; the board changes when the
+ * line means something.
+ *
+ * Only when it means something DIFFERENT, though. Every keystroke comes
+ * through here, and re-solving a route that hasn't changed would throw
+ * away the chord the player is looking at and start again at the first.
+ */
+function applyProgression({ render: draw = true } = {}) {
+  const input = document.getElementById("progInput");
+  const { steps, errors } = parseProgression(input.value);
+  if (errors.length) { syncProgressionReadout(errors); return; }
+
+  const before = customProgressionKey();
+  setCustomProgression(steps);
+  syncProgressionReadout([]);
+  if (customProgressionKey() === before) return;
+
+  saveSetting("progressionText", input.value);
+  progressionCache = { key: null, chords: [] };
+  posIndex = 0;                       // a different route: start at its top
+  if (draw) render();
+}
+
+/**
+ * What the line was understood to say, spelled in the key.
+ *
+ * Which is the only way to see that "vi IV I V" in E is C#m A E B — the
+ * degrees are the thing typed and the chords are the thing played, and
+ * without this the player has to work out which they got.
+ */
+function syncProgressionReadout(errors) {
+  const out = document.getElementById("progReadout");
+  if (!out) return;
+  out.classList.toggle("unread", errors.length > 0);
+  if (errors.length) {
+    out.textContent = `can't read ${errors.map(e => `"${e}"`).join(", ")}`;
+    return;
+  }
+  const key = document.getElementById("root").value;
+  const steps = progressionSteps(key, CUSTOM_PROGRESSION);
+  out.textContent = steps.length
+    ? steps.map(s => s.symbol).join("  ·  ")
+    : "chords by name, or degrees — both read the same";
+}
+
+/** Show the box only where there is a progression to write. */
+function syncProgression() {
+  const on = isCustomProgression();
+  document.getElementById("progEdit").classList.toggle("on", on);
+  if (on) syncProgressionReadout([]);
 }
 
 /**
@@ -2604,10 +2770,15 @@ function render({ animate = true } = {}) {
       // The numeral says what the chord is doing, the symbol says what to
       // call it, and the rest is what the hand has to do — which is the
       // whole reason these particular grips were chosen.
+      // A chord written as a degree says both what it is doing and what
+      // to call it; one written by name has only the name, and a numeral
+      // is not missing from it — there was never one to say.
       posLabel.textContent = voicing
-        ? `${posIndex + 1}/${chords.length} · ${voicing.numeral} · ${voicing.symbol}`
-          + gripName(voicing) + handName(voicing)
-        : "no grips found for this progression";
+        ? [`${posIndex + 1}/${chords.length}`, voicing.numeral, voicing.symbol]
+            .filter(Boolean).join(" · ") + gripName(voicing) + handName(voicing)
+        : isCustomProgression()
+          ? "write a progression above"
+          : "no grips found for this progression";
     }
     syncArrows(posIndex, chords.length);
     return;
@@ -2901,6 +3072,9 @@ function syncCagedControls() {
   btn.textContent = walk ? "Chords" : chords ? "Voicings" : caged ? "CAGED" : "Positions";
   nav.style.display = (chords || walk || cagedOn) ? "flex" : "none";
 
+  // The typing box comes and goes with the progression it belongs to.
+  syncProgression();
+
   // A scale or an arpeggio is something you travel through, so picking a
   // run is simply what the board does — there is nothing to switch on. A
   // chord is held rather than travelled through, so it is off there.
@@ -3095,6 +3269,14 @@ function initControls() {
   }
   syncMasthead();
 
+  // The progression the player wrote last time, back in the box and back
+  // in the model before anything is drawn from it. Typing into the box
+  // is the only other way in — see applyProgression.
+  const progInput = document.getElementById("progInput");
+  progInput.value = saved.progressionText ?? "";
+  applyProgression({ render: false });
+  progInput.addEventListener("input", () => applyProgression());
+
   // Switching between scales and arpeggios reloads the menu beneath it.
   document.getElementById("kind").addEventListener("change", e => {
     fillMaterialMenu(e.target.value);
@@ -3166,10 +3348,65 @@ function initControls() {
   document.getElementById("playBtn").addEventListener("click", () => {
     if (playerKind === "run") stopSound(); else playRun();
   });
+  // ---- The practice bench ---------------------------------
+  // The tempo is one number for the click, the run and the progression
+  // alike, so setting it here sets it for whatever is sounding — drag it
+  // under a running metronome and the click follows.
   const bpm = document.getElementById("bpm");
-  bpm.addEventListener("input", () => {
+  const meter = document.getElementById("meter");
+  bpm.value = saved.bpm ?? bpm.value;
+  meter.value = saved.meter ?? meter.value;
+  const showTempo = () => {
     document.getElementById("bpmLabel").textContent = bpm.value;
+    applyTempo();
+  };
+  /**
+   * A phrase already sounding keeps the grid it was scheduled on — every
+   * note of it is written against the audio clock, and there is no
+   * sensible way to bend beats that have already been placed. So a new
+   * tempo means starting it again on the new one, counted in as usual.
+   *
+   * Which is why this hangs off `change` and not `input`: dragging the
+   * slider would otherwise restart the loop at every pixel.
+   */
+  const retimePlaying = () => {
+    if (playerKind === "run") { stopSound(); playRun(); }
+    else if (playerKind === "progression") { stopSound(); playProgressionThrough(); }
+  };
+  bpm.addEventListener("input", () => { showTempo(); saveSetting("bpm", bpm.value); });
+  bpm.addEventListener("change", retimePlaying);
+  meter.addEventListener("change", () => {
+    showTempo();
+    saveSetting("meter", meter.value);
+    retimePlaying();
   });
+  showTempo();
+
+  // The click, on its own. It needs the audio context awake, and that
+  // can only happen inside a real click on a button — which this is.
+  document.getElementById("metroBtn").addEventListener("click", async () => {
+    const wanted = !metronomeOn();
+    if (wanted && !(await unlock())) return;
+    applyTempo();
+    setMetronome(wanted);
+    syncPractice();
+  });
+  onCount(showCount);
+
+  document.getElementById("countInBtn").addEventListener("click", () => {
+    countInOn = !countInOn;
+    saveSetting("countIn", countInOn);
+    syncPractice();
+  });
+  document.getElementById("loopBtn").addEventListener("click", () => {
+    loopOn = !loopOn;
+    saveSetting("loop", loopOn);
+    syncPractice();
+  });
+
+  countInOn = !!saved.countIn;
+  loopOn    = !!saved.loop;
+  syncPractice();
 
   document.getElementById("strumBtn").addEventListener("click", () => {
     if (playerKind === "chord" || playerKind === "progression") stopSound();

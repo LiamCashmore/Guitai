@@ -356,5 +356,28 @@ export function spellScale(root, type) {
   });
 }
 
+/**
+ * Spell a pitch class as a given letter — "the E-something that sounds
+ * this note", which comes out E, Eb or E# as the pitch requires.
+ *
+ * The rule spellScale already works by, exposed because a chord named by
+ * scale degree needs it too: bVII in C is the seventh degree lowered, and
+ * that is a flattened B rather than the A# it shares a pitch with. The
+ * letter is fixed by the degree; only the accidental is in question.
+ */
+export function spellOn(pc, letter) {
+  return letter + accidental(((pc % 12) + 12) % 12, letter);
+}
+
+/** The letter a scale degree lands on, counting up from a root's letter. */
+export function letterAt(root, degree) {
+  return LETTERS[(LETTERS.indexOf(root[0]) + degree - 1) % 7];
+}
+
+// Every note set this file knows, chords and scales alike — the names
+// everything else in the app calls them by, and so the vocabulary a
+// parser of what a player types has to resolve down to. See symbols.js.
+export const TYPE_NAMES = Object.keys(scaleFormulas);
+
 // MIDI note -> pitch class in this file's convention (A = 0).
 export function midiToPc(midi) { return (midi + 3) % 12; }

@@ -71,6 +71,18 @@
         <label for="scale" id="scaleLabel">Scale</label>
         <div class="select"><select id="scale"></select></div>
       </div>
+
+      <!-- A progression the player writes themselves. Chords as they are
+           written on a chart, or degrees as the presets are written —
+           both, in the same line, since the only difference is whether a
+           chord names its own root or takes it from the key. Shown only
+           when the menu above is on Custom. -->
+      <div class="field wide" id="progEdit">
+        <label for="progInput">Chords</label>
+        <input id="progInput" type="text" autocomplete="off" autocapitalize="off"
+               spellcheck="false" placeholder="Am7 | D7 | Gmaj7   —   or   vi IV I V" />
+        <span id="progReadout" class="readout"></span>
+      </div>
       <div class="field">
         <label for="labelsBtn">Labels</label>
         <button id="labelsBtn" class="btn" type="button">Note names</button>
@@ -140,13 +152,35 @@
         <span id="pathLabel" class="readout readout-hint"></span>
         <div id="runControls" class="cluster">
           <button id="playBtn" class="btn btn-accent" type="button">Play</button>
-          <span class="slider">
-            <input id="bpm" type="range" min="40" max="200" step="5" value="80"
-                   aria-label="Tempo" title="Tempo" />
-            <span id="bpmLabel" class="readout">80</span>
-          </span>
           <button id="clearPath" class="btn btn-quiet" type="button" title="Clear the run">Clear</button>
         </div>
+      </div>
+    </section>
+
+    <!-- The practice bench: one tempo, one time signature, shared by the
+         click, the run and the progression. Always here, because a
+         metronome is worth having whatever is on the board. -->
+    <section class="panel panel-quiet" aria-label="Practice">
+      <div class="cluster">
+        <button id="metroBtn" class="btn" type="button"
+                title="A click at the tempo below">Metronome</button>
+        <span class="slider slider-wide">
+          <input id="bpm" type="range" min="30" max="400" step="1" value="80"
+                 aria-label="Tempo" title="Tempo, in beats per minute" />
+          <span id="bpmLabel" class="readout">80</span>
+        </span>
+        <div class="select select-compact">
+          <select id="meter" aria-label="Time signature" title="Beats to the bar">
+            <option value="4">4/4</option>
+            <option value="3">3/4</option>
+          </select>
+        </div>
+        <button id="countInBtn" class="btn" type="button"
+                title="A bar counted in before it starts">Count-in</button>
+        <button id="loopBtn" class="btn" type="button"
+                title="Round and round, in four-bar phrases, until you press stop">Loop</button>
+        <!-- Where the beat is. Silent until something is counting. -->
+        <span id="beatReadout" class="readout"></span>
       </div>
     </section>
 

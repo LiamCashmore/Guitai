@@ -7,6 +7,7 @@
 // importing from "./music.js" without caring how it's organised inside.
 //
 //   theory.js       note names, scale formulas, spelling
+//   symbols.js      reading and writing chord symbols
 //   fretboard.js    instruments + the live fretboard grid
 //   positions.js    CAGED shapes and general hand positions
 //   progressions.js chord-sequence solving
@@ -15,6 +16,7 @@
 // ============================================================
 
 export * from "./theory.js";
+export * from "./symbols.js";
 export * from "./fretboard.js";
 export * from "./positions.js";
 export * from "./progressions.js";
