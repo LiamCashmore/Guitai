@@ -28,7 +28,9 @@ import {
   getPositions,
   getShapeGrid,
   supportsCaged,
-  findPathThrough,
+  findRun,
+  runSegments,
+  extendChain,
   pitchAt,
   chordVoicings,
   rankVoicings,
@@ -290,19 +292,30 @@ let openOn = false;
 // you travel through, so picking a start and a target is simply what the
 // board does. A chord isn't travelled through, so it is off there.
 let pathOn     = false;
-let pathFrom   = null;   // { string, fret }
-let pathTo     = null;
 /**
- * Notes the run is held through, as { string, fret, locked }.
+ * The notes picked, in the order they were picked.
  *
- * Sliding a note pins it: the run follows, but the pin gives way once an
- * end is moved, since it was only ever a way of shaping this particular
- * run. Clicking a note locks it, and a lock is kept through everything —
- * move an end and the run is re-routed to keep visiting it, turning back
- * on itself if that is what it takes.
+ * Two of them is a run from one to the other. A third hangs another leg
+ * off the end: the note the run was landing on becomes the note the next
+ * leg starts from, so the chain reads as a phrase — up to here, then down
+ * to there, then back up to this — rather than as one straight climb.
  */
-let pathStops  = [];
-let pathResult = null;   // { cells, cost } from findPathThrough
+let pathChain  = [];     // [{ string, fret }, ...]
+/**
+ * Notes each leg is held through, as { string, fret, locked }.
+ * pathHeld[i] shapes the leg from pathChain[i] to pathChain[i + 1].
+ *
+ * Sliding a note pins it: the run follows, but the pin gives way once one
+ * of that leg's ends is moved, since it was only ever a way of shaping
+ * this particular leg. Clicking a note locks it, and a lock is kept
+ * through everything — move an end and the leg is re-routed to keep
+ * visiting it, turning back on itself if that is what it takes.
+ */
+let pathHeld   = [];     // [[{ string, fret, locked }, ...], ...]
+let pathResult = null;   // { legs, held, cells, cost } from findRun
+// Where a newly hung leg begins in the run's cells, so its line can be
+// drawn in rather than simply appearing. Consumed by the next render.
+let growFrom   = null;
 // Showing a position traces the whole shape by default. Clearing puts
 // that aside so notes can be picked by hand instead.
 let skipAutoPath = false;
@@ -488,23 +501,20 @@ function drawBoard() {
   chordLayer = el("g", { id: "chordLayer" });
   svg.appendChild(chordLayer);
 
-  // The run's connecting line sits under the note markers.
+  // The run's connecting line sits under the note markers. It is drawn as
+  // one polyline per stretch of travel rather than as a single line,
+  // because a run that turns around is two different things — climbing
+  // and falling — and they are coloured apart. See renderPathLine.
   pathLayer = el("g", { id: "pathLayer" });
-  pathLine = el("polyline", {
-    points: "", fill: "none", "stroke-width": 3,
-    "stroke-linecap": "round", "stroke-linejoin": "round", opacity: 0,
-  });
-  pathLayer.appendChild(pathLine);
-  // The playhead: the same line again, drawn over the top and revealed
-  // from the start as the run plays. Butt caps, so the growing end is a
-  // clean edge rather than a bead — and so nothing shows at all before
-  // the first note, where a round cap would leave a dot sitting on the
-  // board.
-  pathPlay = el("polyline", {
-    class: "path-play", points: "", fill: "none", "stroke-width": 4,
-    "stroke-linecap": "butt", "stroke-linejoin": "round", opacity: 0,
-  });
-  pathLayer.appendChild(pathPlay);
+  pathRun = el("g", { id: "pathRun" });
+  pathLayer.appendChild(pathRun);
+  lineSegs = [];
+  // Where the run lights up as it plays: one short piece per step, drawn
+  // over the ghosted line beneath and left to fade behind the beat. Built
+  // when playback starts and torn down when it ends — see startPlayhead.
+  pathSpark = el("g", { id: "pathSpark" });
+  pathLayer.appendChild(pathSpark);
+  sparks = [];
   svg.appendChild(pathLayer);
 
   noteLayer = el("g", { id: "noteLayer" });
@@ -644,20 +654,33 @@ function renderNotes(grid, mode) {
     });
   });
 
-  // How each marker should look while a run is being built.
-  const onPath = new Set(pathResult ? pathResult.cells.map(cellId) : []);
+  // How each marker should look while a run is being built. A note the
+  // run passes through is coloured by which way the hand was going when
+  // it got there, the same as the line joining it — so climbing and
+  // falling read apart on the markers as well as between them.
+  const travel = pathDirections();
   const roleOf = (s, f) => {
     // A chord tone the grip doesn't use recedes, the same way notes off
     // the run do.
     if (ghostCells.has(`${s}:${f}`)) return "is-muted";
     if (!pathOn) return "";
     const id = `${s}:${f}`;
-    if (pathFrom && cellId(pathFrom) === id) return "is-start";
-    if (pathTo   && cellId(pathTo)   === id) return "is-target";
-    const stop = pathStops.find(s => cellId(s) === id);
+
+    const anchor = pathChain.findIndex(c => cellId(c) === id);
+    if (anchor === 0) return "is-anchor is-start";
+    if (anchor > 0) {
+      // The last note picked is where the run finishes for now; the ones
+      // in between are joints, where one leg hands over to the next.
+      return anchor === pathChain.length - 1 ? "is-anchor is-target"
+                                             : "is-anchor is-turn";
+    }
+
+    const stop = heldAt(id);
     if (stop) return stop.locked ? "is-locked" : "is-pinned";
-    if (onPath.has(id)) return "is-path";
-    return pathFrom ? "is-muted" : "";
+
+    const dir = travel.get(id);
+    if (dir) return `is-path ${dir > 0 ? "is-asc" : "is-desc"}`;
+    return pathChain.length ? "is-muted" : "";
   };
 
   byPosition.clear();
@@ -741,59 +764,95 @@ function renderNotes(grid, mode) {
 // position is showing, this is the shape the run must stay inside.
 let visibleCells = null;
 
-const stopIndex = cell => pathStops.findIndex(s => cellId(s) === cellId(cell));
-const isLocked  = cell => { const i = stopIndex(cell); return i >= 0 && pathStops[i].locked; };
+/** The held note sitting on a cell, whichever leg is holding it. */
+function heldAt(id) {
+  for (const stops of pathHeld) {
+    const found = stops?.find(s => cellId(s) === id);
+    if (found) return found;
+  }
+  return null;
+}
+
+/** Where a held note lives, as the leg holding it and its place in that leg. */
+function findHeld(id) {
+  for (let leg = 0; leg < pathHeld.length; leg++) {
+    const at = pathHeld[leg]?.findIndex(s => cellId(s) === id) ?? -1;
+    if (at >= 0) return { leg, at };
+  }
+  return null;
+}
+
+/** Which leg of the run passes through a cell. */
+function legOfCell(id) {
+  if (!pathResult) return -1;
+  return pathResult.legs.findIndex(l => l.cells.some(c => cellId(c) === id));
+}
+
+/**
+ * Which way the hand was travelling at each note of the run.
+ *
+ * A note reached twice — climbing past it and falling back through it —
+ * can only be drawn one way, and it is drawn as the later visit, so the
+ * marker agrees with wherever the run left off.
+ */
+function pathDirections() {
+  const dirs = new Map();
+  if (!pathResult) return dirs;
+  for (const seg of runSegments(pathResult.cells)) {
+    for (const c of seg.cells) dirs.set(cellId(c), seg.dir);
+  }
+  return dirs;
+}
+
+/** The stops held anywhere along the run, flattened. */
+const allHeld = () => pathHeld.flatMap(s => s ?? []);
 
 /**
  * Work out the run for the notes currently chosen.
  *
- * Held notes become stops along the way, ordered by pitch in the
- * direction of travel. Nothing is discarded for sitting outside the two
- * ends — a stop beyond them just turns the run around there.
- *
- * If a set of stops genuinely can't be joined, one is let go and the
- * search retried: pins first, then the oldest locks last, so a
- * deliberate lock outlives an incidental pin.
+ * The chain says which pairs of notes have to be joined; findRun solves
+ * each leg and stitches them. Held notes belong to the leg they were
+ * taken from, and one that genuinely can't be honoured is let go there —
+ * whatever survives comes back, so the rings on the board never outlive
+ * the notes the run actually visits.
  */
 function recomputePath({ force = false } = {}) {
   // The run is about to change under it, so whatever is sounding is no
   // longer what's on screen.
   stopSound();
-  if (!pathFrom || !pathTo) { pathResult = null; return; }
+  pathHeld.length = Math.max(0, pathChain.length - 1);
+  if (pathChain.length < 2) { pathResult = null; return; }
+
   const root = document.getElementById("root").value;
   const type = document.getElementById("scale").value;
   const bounds = cagedOn ? visibleCells : null;
 
-  // A stop landing on an end is redundant.
-  pathStops = pathStops.filter(s =>
-    cellId(s) !== cellId(pathFrom) && cellId(s) !== cellId(pathTo));
+  // If the run on screen already calls at every note picked, in order,
+  // and visits every stop, leave it exactly as it is. Holding a note the
+  // run already passes through asks for nothing new, and re-solving would
+  // reshuffle the rest of it for no reason — each leg is optimised on its
+  // own, so a split can land on a different route of equal cost.
+  if (!force && pathResult && visitsEverything()) return;
 
-  // If the run on screen already visits every stop and both ends, leave
-  // it exactly as it is. Holding a note the run already passes through
-  // asks for nothing new, and re-solving would reshuffle the rest of it
-  // for no reason — each leg is optimised on its own, so a split can land
-  // on a different route of equal cost.
-  if (!force && pathResult) {
-    const cells = pathResult.cells;
-    const endsHold = cellId(cells[0]) === cellId(pathFrom) &&
-                     cellId(cells[cells.length - 1]) === cellId(pathTo);
-    const stopsHold = pathStops.every(s => cells.some(c => cellId(c) === cellId(s)));
-    if (endsHold && stopsHold) return;
+  const found = findRun(root, type, pathChain, pathHeld, bounds);
+  pathHeld = found ? found.held : pathHeld.map(() => []);
+  pathResult = found;
+}
+
+/** Does the run on screen still answer to the chain and the stops? */
+function visitsEverything() {
+  const ids = pathResult.cells.map(cellId);
+  if (ids[0] !== cellId(pathChain[0])) return false;
+  if (ids[ids.length - 1] !== cellId(pathChain[pathChain.length - 1])) return false;
+  // The chain's notes have to appear in the order they were picked — the
+  // same three notes in a different order is a different phrase.
+  let from = 0;
+  for (const anchor of pathChain) {
+    const at = ids.indexOf(cellId(anchor), from);
+    if (at < 0) return false;
+    from = at;
   }
-
-  const ascending = pitchAt(pathTo) >= pitchAt(pathFrom);
-  const inOrder = () => pathStops.slice().sort((a, b) =>
-    ascending ? pitchAt(a) - pitchAt(b) : pitchAt(b) - pitchAt(a));
-
-  while (true) {
-    const found = findPathThrough(root, type, [pathFrom, ...inOrder(), pathTo], bounds);
-    if (found) { pathResult = found; return; }
-    if (pathStops.length === 0) { pathResult = null; return; }
-    // Give up a pin before a lock.
-    const loosest = pathStops.map((s, i) => [s, i]).filter(([s]) => !s.locked).pop()
-                 ?? pathStops.map((s, i) => [s, i]).pop();
-    pathStops.splice(loosest[1], 1);
-  }
+  return allHeld().every(s => ids.includes(cellId(s)));
 }
 
 // ---- Dragging any note of the run -------------------------
@@ -839,31 +898,37 @@ function cellNearestOnString(string, x) {
 /**
  * What can be dragged, and how, differs by role on purpose.
  *
- * The two ends set how far the run reaches, so they move freely across
- * the whole board. A locked note only decides which string one note is
- * played on, so it keeps to its own string — easier to steer, and the
- * notes on either side redistribute around it. Unlocked notes don't drag
- * at all; click one first to hold it.
+ * A note you picked sets how far its legs reach, so it moves freely
+ * across the whole board. A note merely passed through only decides which
+ * string one note is played on, so it keeps to its own string — easier to
+ * steer, and the notes on either side redistribute around it.
  */
 function beginDrag(evt, cell) {
-  if (!pathOn || !pathFrom) return;
+  if (!pathOn || !pathChain.length) return;
   const id = cellId(cell);
 
-  let role = null;
-  if (pathFrom && cellId(pathFrom) === id) role = "from";
-  else if (pathTo && cellId(pathTo) === id) role = "to";
-  else if (stopIndex(cell) >= 0) role = "via";
-  else if (pathResult && pathResult.cells.some(c => cellId(c) === id)) role = "via";
-  if (!role) return;
-
-  drag = { role, string: cell.string, moved: false, held: null };
-  if (role === "via") {
-    // Sliding a note holds it. An existing stop keeps whatever standing
-    // it had; a note taken straight off the run becomes a pin.
-    const at = stopIndex(cell);
-    drag.held = at >= 0 ? pathStops[at] : { ...cell, locked: false };
-    if (at < 0) pathStops.push(drag.held);
+  // One of the notes picked: dragging it moves that link of the chain.
+  const anchor = pathChain.findIndex(c => cellId(c) === id);
+  if (anchor >= 0) {
+    drag = { role: "anchor", at: anchor, string: cell.string, moved: false };
+    evt.preventDefault();
+    return;
   }
+
+  // Otherwise it has to be a note some leg goes through, and it is that
+  // leg the note will be held on.
+  const found = findHeld(id);
+  const leg = found ? found.leg : legOfCell(id);
+  if (leg < 0) return;
+
+  // Sliding a note holds it — but only once it has actually slid. A press
+  // that goes nowhere is a click, and a click means something else
+  // entirely here (see selectPathNote), so nothing may be held yet.
+  drag = {
+    role: "via", leg, string: cell.string, moved: false,
+    cell: { string: cell.string, fret: cell.fret },
+    held: found ? pathHeld[found.leg][found.at] : null,
+  };
   evt.preventDefault();
 }
 
@@ -908,34 +973,50 @@ function onDragMove(evt) {
     : cellNearest(p.x, p.y);
   if (!cell) return;
 
-  const current = drag.role === "from" ? pathFrom
-                : drag.role === "to"   ? pathTo
-                : drag.held;
+  const current = drag.role === "anchor" ? pathChain[drag.at] : (drag.held ?? drag.cell);
   if (current && cellId(current) === cellId(cell)) return;   // still on it
 
   if (drag.role === "via") {
+    const leg = pathResult?.legs[drag.leg];
     const pitch = pitchAt(cell);
-    // A stop must stay between the ends while it's only a pin; a lock is
-    // free to go anywhere, and the run turns around to reach it.
-    if (!drag.held.locked) {
-      const lo = Math.min(pitchAt(pathFrom), pitchAt(pathTo));
-      const hi = Math.max(pitchAt(pathFrom), pitchAt(pathTo));
+    // A stop must stay between its leg's ends while it's only a pin; a
+    // lock is free to go anywhere, and the leg turns around to reach it.
+    if (!drag.held?.locked && leg) {
+      const lo = Math.min(pitchAt(leg.from), pitchAt(leg.to));
+      const hi = Math.max(pitchAt(leg.from), pitchAt(leg.to));
       if (pitch <= lo || pitch >= hi) return;
     }
-    // One stop per pitch: two would contradict each other.
-    pathStops = pathStops.filter(s => s === drag.held || pitchAt(s) !== pitch);
+    // The note has genuinely moved, so now it is being held. A note taken
+    // straight off the run becomes a pin; one already held keeps whatever
+    // standing it had.
+    if (!drag.held) {
+      drag.held = { ...drag.cell, locked: false };
+      (pathHeld[drag.leg] ??= []).push(drag.held);
+    }
+    // One stop per pitch on a leg: two would contradict each other.
+    pathHeld[drag.leg] = pathHeld[drag.leg].filter(s => s === drag.held || pitchAt(s) !== pitch);
     drag.held.string = cell.string;
     drag.held.fret   = cell.fret;
   } else {
-    // Moving an end releases the pins, which existed only to shape the
-    // run as it was. Locks are kept and the run re-routed to reach them.
-    pathStops = pathStops.filter(s => s.locked);
-    if (drag.role === "from") pathFrom = cell; else pathTo = cell;
+    // A link can't be dragged onto the one beside it — a leg from a note
+    // to itself is no leg at all.
+    const id = cellId(cell);
+    if ([drag.at - 1, drag.at + 1].some(i => pathChain[i] && cellId(pathChain[i]) === id)) return;
+    pathChain[drag.at] = { string: cell.string, fret: cell.fret };
+    // Moving a link releases the pins on the legs either side of it,
+    // which existed only to shape those legs as they were. Locks are kept
+    // and the run re-routed to reach them.
+    for (const i of [drag.at - 1, drag.at]) {
+      if (pathHeld[i]) pathHeld[i] = pathHeld[i].filter(s => s.locked);
+    }
   }
 
   drag.moved = true;
   skipAutoPath = true;
-  recomputePath();
+  // Moving a link re-solves outright: a joint dragged onto a note the run
+  // already passed through still splits its two legs differently, even
+  // though the run visits everything it did a moment ago.
+  recomputePath({ force: drag.role === "anchor" });
   render({ animate: false });                   // follow the pointer exactly
 }
 
@@ -949,70 +1030,73 @@ function endDrag() {
 }
 
 /**
- * Clicking notes builds the run: the first pick is where it starts, the
- * second where it ends. A third click begins a new run from there.
- */
-/**
- * Clicking a note along the run locks it where it stands; clicking it
- * again lets it go. Locking is deliberate, so nothing gets pinned by
- * accident — and a locked note can then be dragged along its string to
- * place it, with the rest of the run rearranging around it.
+ * Clicking notes builds the run, one leg at a time.
  *
- * The ends stay put once placed; drag them to move them. Double-click
+ * The first pick is where it starts and the second where it lands. Every
+ * pick after that carries the run on from where it left off: the note it
+ * was landing on becomes the note the next leg starts from, so the picks
+ * chain rather than replacing each other, and the run grows into a phrase
+ * that turns around wherever you asked it to.
+ *
+ * A note the run already passes through is no exception: picking it sends
+ * the run back through territory it has covered, which is a phrase
+ * doubling back on itself and exactly what the colours are there to show.
+ *
+ * Holding a note where it stands is a drag, not a click — sliding one
+ * pins it — and clicking a pinned note then locks it for good. So the
+ * click is free to mean the one thing it means everywhere: carry on to
+ * here.
+ *
+ * The notes you picked stay put; drag them to move them. Double-click
  * anywhere starts over.
  */
 function selectPathNote(cell) {
   if (!pathOn) return;
   const id = cellId(cell);
 
-  const at = stopIndex(cell);
-  if (at >= 0) {
-    if (pathStops[at].locked) {
-      pathStops.splice(at, 1);            // locked -> let it go entirely
+  // A note already being held: firm it up, or let it go.
+  const found = findHeld(id);
+  if (found) {
+    const stops = pathHeld[found.leg];
+    if (stops[found.at].locked) {
+      stops.splice(found.at, 1);          // locked -> let it go entirely
       recomputePath({ force: true });     // freedom returns, so re-solve
     } else {
-      pathStops[at].locked = true;        // pinned -> make it stick
+      stops[found.at].locked = true;      // pinned -> make it stick
     }
     render();
     return;
   }
-  // Placed ends are fixed; only dragging moves them.
-  if (pathFrom && cellId(pathFrom) === id) return;
-  if (pathTo   && cellId(pathTo)   === id) return;
+  // Notes already picked are fixed; only dragging moves them.
+  if (pathChain.some(c => cellId(c) === id)) return;
 
-  // A note the run passes through -> lock it right here.
-  if (pathResult && pathResult.cells.some(c => cellId(c) === id)) {
-    pathStops.push({ ...cell, locked: true });
-    recomputePath();
-    render();
-    return;
-  }
-
-  if (!pathFrom) {
-    pathFrom = cell;
-    skipAutoPath = true;                  // a pick of your own takes over
-  } else if (!pathTo) {
-    pathTo = cell;
-    recomputePath();
-  } else {
-    return;                               // run is complete; leave it be
-  }
+  // Otherwise it joins the chain. Where the run reached before this pick
+  // is where the new leg will be drawn from, so the line can grow out of
+  // it rather than the whole run reappearing a note longer.
+  const reached = pathResult ? pathResult.cells.length : 0;
+  pathChain = extendChain(pathChain, cell);
+  skipAutoPath = true;                    // a pick of your own takes over
+  recomputePath();
+  if (reached > 0 && pathResult) growFrom = reached - 1;
   render();
+  popNote(cell);
 }
 
 /** Double-click anywhere: drop the run and begin again from that note. */
 function restartPathAt(cell) {
   if (!pathOn) return;
   clearPath();
-  pathFrom = cell;
+  pathChain = [{ string: cell.string, fret: cell.fret }];
   skipAutoPath = true;
   render();
+  popNote(cell);
 }
 
 function clearPath() {
   stopSound();
-  pathFrom = null; pathTo = null; pathStops = []; pathResult = null;
+  pathChain = []; pathHeld = []; pathResult = null;
   skipAutoPath = false;
+  growFrom = null;
 }
 
 /**
@@ -1030,18 +1114,35 @@ function autoPathForPosition(grid) {
   }));
   if (!lowest || !highest || lowest.midi === highest.midi) return;
 
-  pathFrom = { string: lowest.string,  fret: lowest.fret };
-  pathTo   = { string: highest.string, fret: highest.fret };
-  pathStops = [];
+  pathChain = [{ string: lowest.string,  fret: lowest.fret },
+               { string: highest.string, fret: highest.fret }];
+  pathHeld = [];
   recomputePath();
+}
+
+/**
+ * A note picked swells and settles, the way a plucked string does.
+ *
+ * Purely a confirmation that the click landed — with the run growing out
+ * of the note at the same moment, the two together say where the new leg
+ * came from. Driven straight on the marker rather than through a render,
+ * since it is about this one click and nothing else on the board.
+ */
+function popNote(cell) {
+  const rec = byPosition.get(cellId(cell));
+  if (!rec || !wantsMotion()) return;
+  rec.group.classList.remove("is-picked");
+  void rec.group.getBoundingClientRect();   // let the animation restart
+  rec.group.classList.add("is-picked");
+  setTimeout(() => rec.group.classList.remove("is-picked"), 460);
 }
 
 // ---- The run's line ---------------------------------------
 const LINE_OPACITY = 0.90;
 
-let pathLine    = null;   // the <polyline>
-let pathPlay    = null;   // the playhead drawn over it
-let linePoints  = [];     // where it is drawn at this instant
+let pathRun     = null;   // the <g> the run's stretches are drawn into
+let pathSpark   = null;   // the <g> the lit pieces are drawn into, over it
+let lineSegs    = [];     // [{ el, points, dir }] one per stretch, in order
 let lineAnim    = null;   // in-flight animation handle
 let lineShown   = false;  // is it currently visible?
 
@@ -1107,88 +1208,237 @@ function alignLines(a, b) {
           ts.map(t => pointAtFraction(b, B.fracs, t))];
 }
 
+/** One stretch of the run: a polyline, coloured by which way it travels. */
+function segmentClass(dir) {
+  return `path-seg ${dir > 0 ? "is-asc" : "is-desc"}`;
+}
+
+function makeSegment(dir) {
+  const line = el("polyline", {
+    class: segmentClass(dir),
+    points: "", fill: "none", "stroke-width": 3,
+    "stroke-linecap": "round", "stroke-linejoin": "round", opacity: 0,
+  });
+  pathRun.appendChild(line);
+  return { el: line, points: [], dir };
+}
+
+function retireSegment(rec) {
+  rec.el.setAttribute("opacity", 0);
+  setTimeout(() => rec.el.remove(), FADE_MS);
+}
+
 /**
- * Draw the line joining the run, in playing order.
+ * Draw the run, in playing order, as one line per stretch of travel.
  *
- * Between positions it slides on the same curve and over the same time as
- * the notes it connects, so the two read as one movement. Appearing and
- * disappearing is left to a CSS opacity fade — a run arriving somewhere
- * new shouldn't skate across the neck to get there.
+ * Splitting it is what lets the two directions be told apart: a stretch
+ * climbing is drawn in orange, one falling in the pale blue, and they
+ * meet on the note the run turns on — which belongs to both, so the line
+ * stays unbroken across the corner.
+ *
+ * Between positions each stretch slides on the same curve and over the
+ * same time as the notes it connects, so the two read as one movement.
+ * Appearing and disappearing is left to a CSS opacity fade — a run
+ * arriving somewhere new shouldn't skate across the neck to get there.
  *
  * While a note is being dragged the line tracks the pointer outright,
  * since easing there would only lag behind the hand.
+ *
+ * `growFrom`, when a leg has just been hung off the end, is where in the
+ * run the new geometry begins: everything before it is already on the
+ * board and stays where it is, and the rest is drawn in from there.
  */
 function renderPathLine({ animate = true } = {}) {
   if (lineAnim) { cancelAnimationFrame(lineAnim); lineAnim = null; }
 
+  const grow = growFrom;
+  growFrom = null;
+
   const target = (pathOn && pathResult)
-    ? pathResult.cells.map(c => ({ x: fretX(c.fret, c.string), y: stringY(c.string) }))
+    ? runSegments(pathResult.cells).map(seg => ({
+        dir: seg.dir,
+        from: seg.from,
+        points: seg.cells.map(c => ({ x: fretX(c.fret, c.string), y: stringY(c.string) })),
+      }))
     : [];
 
-  // No run to show: fade out. The shape is left in place underneath so
-  // nothing flickers through the fade.
+  // Stretches the new run has no use for. The shape is left in place
+  // underneath as it fades, so nothing flickers through it.
+  for (let i = target.length; i < lineSegs.length; i++) retireSegment(lineSegs[i]);
+  lineSegs.length = Math.min(lineSegs.length, target.length);
+
   if (target.length === 0) {
     stopPlayhead();
-    pathLine.setAttribute("opacity", 0);
     lineShown = false;
     return;
   }
 
-  // Arriving from hidden, or sliding not wanted: place it outright and
-  // let opacity carry it in.
-  if (!animate || !lineShown || linePoints.length === 0 || !wantsMotion()) {
-    linePoints = target;
-    pathLine.setAttribute("points", asPoints(target));
-    pathLine.setAttribute("opacity", LINE_OPACITY);
-    lineShown = true;
-    return;
-  }
+  const blends = [];   // stretches sliding from where they were
+  const draws  = [];   // stretches being drawn in
 
-  const [start, end] = alignLines(linePoints, target);
+  target.forEach((want, i) => {
+    let rec = lineSegs[i];
+    const isNew = !rec;
+    if (isNew) rec = lineSegs[i] = makeSegment(want.dir);
+    // A stretch that has changed direction keeps its element and simply
+    // changes colour, so its geometry can still slide rather than one
+    // line vanishing and another appearing in the same place.
+    if (rec.dir !== want.dir) {
+      rec.dir = want.dir;
+      rec.el.setAttribute("class", segmentClass(want.dir));
+    }
+
+    const slide = animate && lineShown && !isNew && rec.points.length > 0
+                  && wantsMotion() && grow === null;
+    if (slide) {
+      const [a, b] = alignLines(rec.points, want.points);
+      blends.push({ rec, a, b, end: want.points });
+    } else {
+      rec.points = want.points;
+      rec.el.setAttribute("points", asPoints(want.points));
+      const drawn = grow !== null && wantsMotion() ? beginDraw(rec, want, grow) : null;
+      if (drawn) draws.push(drawn); else clearDraw(rec);
+    }
+
+    // A brand-new element needs a frame at zero before it can fade in.
+    if (isNew) requestAnimationFrame(() => {
+      if (lineSegs[i] === rec) rec.el.setAttribute("opacity", LINE_OPACITY);
+    });
+    else rec.el.setAttribute("opacity", LINE_OPACITY);
+  });
+
+  lineShown = true;
+  if (blends.length || draws.length) stepLine(blends, draws);
+}
+
+/**
+ * Set a stretch up to be drawn in, and say how much of it is new.
+ *
+ * A newly hung leg starts at the note the run had already reached, so the
+ * stretch holding that note is part old and part new — the old part is
+ * revealed straight away and only the rest is drawn. Returns null when
+ * there is nothing new here, which is the usual case for every stretch
+ * but the last.
+ */
+function beginDraw(rec, want, growAt) {
+  const { at, total } = noteDistances(want.points);
+  if (total === 0) return null;
+  // How far into this stretch the new geometry starts. A stretch lying
+  // entirely past the join is new from its first point.
+  const kept = want.from >= growAt ? 0
+             : at[Math.min(growAt - want.from, at.length - 1)];
+  if (kept >= total) return null;
+  rec.el.setAttribute("stroke-dasharray", `${total} ${total}`);
+  rec.el.setAttribute("stroke-dashoffset", total - kept);
+  return { rec, kept, total };
+}
+
+function clearDraw(rec) {
+  rec.el.removeAttribute("stroke-dasharray");
+  rec.el.removeAttribute("stroke-dashoffset");
+}
+
+/**
+ * Step every moving stretch off one clock, so a run that is sliding in
+ * one place and growing in another still reads as a single movement.
+ */
+function stepLine(blends, draws) {
   const t0 = performance.now();
-
   const step = now => {
     const k = Math.min(1, (now - t0) / SLIDE_MS);
     const e = ease(k);
-    const at = start.map((p, i) => ({
-      x: p.x + (end[i].x - p.x) * e,
-      y: p.y + (end[i].y - p.y) * e,
-    }));
-    // Remember where the line actually is, so a move interrupted midway —
-    // holding down the arrow key, say — carries on from here instead of
-    // snapping back to where this one began.
-    linePoints = at;
-    pathLine.setAttribute("points", asPoints(at));
-    if (k < 1) lineAnim = requestAnimationFrame(step);
-    else {
-      lineAnim = null;
-      linePoints = target;
-      pathLine.setAttribute("points", asPoints(target));
+
+    for (const { rec, a, b } of blends) {
+      const at = a.map((p, i) => ({
+        x: p.x + (b[i].x - p.x) * e,
+        y: p.y + (b[i].y - p.y) * e,
+      }));
+      // Remember where the line actually is, so a move interrupted midway
+      // — holding down the arrow key, say — carries on from here instead
+      // of snapping back to where this one began.
+      rec.points = at;
+      rec.el.setAttribute("points", asPoints(at));
     }
+    for (const { rec, kept, total } of draws) {
+      rec.el.setAttribute("stroke-dashoffset", (total - kept) * (1 - e));
+    }
+
+    if (k < 1) { lineAnim = requestAnimationFrame(step); return; }
+    lineAnim = null;
+    for (const { rec, end } of blends) {
+      rec.points = end;
+      rec.el.setAttribute("points", asPoints(end));
+    }
+    for (const { rec } of draws) clearDraw(rec);
   };
   lineAnim = requestAnimationFrame(step);
 }
 
 // ---- The playhead -----------------------------------------
 /**
- * A line that travels the run as it plays, arriving at each note exactly
+ * A light that travels the run as it plays, arriving at each note exactly
  * as that note sounds.
+ *
+ * The whole run recedes first, line and markers together, so that what is
+ * at full strength on the board is only ever what is under the ear right
+ * now. Each note comes back as it is struck and dims again behind the
+ * beat; the stretch of line leading to it draws itself in as the run
+ * crosses it and starts to go once the far note is reached. What is left
+ * is a moving point of light with a tail — which is what a phrase
+ * actually is, rather than a static picture with one note flashing in it.
  *
  * The notes are evenly spaced in time, but the segments joining them are
  * not evenly spaced on the neck — a run crossing four frets to the next
  * note has further to travel than one moving to its neighbour, in the
- * same eighth note. So the line cannot advance at a constant speed along
- * its own length. It advances by note: the whole of segment k is covered
- * in the whole of note k's duration, whatever that segment's length,
- * which is what makes arrival and strike coincide instead of drifting
- * apart over a long run.
+ * same eighth note. So the light cannot advance at a constant speed along
+ * the line. It advances by note: the whole of segment k is covered in the
+ * whole of note k's duration, whatever that segment's length, which is
+ * what makes arrival and strike coincide instead of drifting apart over a
+ * long run.
  *
  * Position comes from the audio clock rather than a wall clock, for the
  * same reason. The two run at slightly different rates, and half a beat
  * of accumulated drift is obvious when you can see it against the note
  * lighting up.
  */
-let playAnim = null;
+let playAnim  = null;
+let sparks    = [];   // [{ el, len }] one lit piece per step of the run
+let glowNotes = [];   // [{ id, rec, strikes }] markers the run lights up
+
+// How far the run recedes while it plays, and how long the light lingers
+// — in notes, not in milliseconds, so the tail keeps its shape at any
+// tempo. A slow run should leave a long trail on the board for the same
+// reason it leaves a long one in the ear.
+const PLAY_GHOST = 0.18;   // must match --play-ghost in styles.css
+// A note outlasts the line that reached it, and by some way. The line is
+// saying where the run went, which stops being news once it has gone;
+// the note is still ringing, and half a dozen of them ringing together is
+// what a phrase sounds like. So the board holds the notes long enough for
+// the shape of the phrase to be visible all at once.
+const NOTE_DECAY = 9;
+const LINE_DECAY = 2.0;
+
+/** The line going out behind the run: gone quickest where it is oldest. */
+const decay = t => (t >= 1 ? 0 : (1 - t) ** 1.7);
+
+/**
+ * A note dying away.
+ *
+ * How long it takes matters less than where it spends that time. A curve
+ * that falls fastest the instant it is struck reads as quick however far
+ * it is stretched — most of the brightness is gone while the note is
+ * still obviously the one being played, and the rest is a long faint
+ * nothing. So this holds full for a moment and then eases off on a cosine,
+ * which is gentle at both ends: slow to leave, and settling into the
+ * ghost rather than arriving at it.
+ */
+const NOTE_HOLD = 0.12;   // of the fall spent at full, before any of it
+const noteGlow = t => {
+  if (t >= 1) return 0;
+  if (t <= NOTE_HOLD) return 1;
+  const k = (t - NOTE_HOLD) / (1 - NOTE_HOLD);
+  return (1 + Math.cos(Math.PI * k)) / 2;
+};
 
 /** Distance along the line to each note, and the total. */
 function noteDistances(points) {
@@ -1200,48 +1450,117 @@ function noteDistances(points) {
   return { at, total: at[at.length - 1] };
 }
 
+/**
+ * Put the board back the way it was.
+ *
+ * The markers are only restored where they are still the marker sitting
+ * at that spot — a render during the tail may have retired them, and
+ * pushing one back to full opacity mid-fade would leave a note on the
+ * board that nothing owns.
+ */
 function stopPlayhead() {
   if (playAnim) { cancelAnimationFrame(playAnim); playAnim = null; }
-  if (pathPlay) pathPlay.setAttribute("opacity", 0);
+  for (const { id, rec } of glowNotes) {
+    if (byPosition.get(id) === rec) rec.group.style.opacity = "1";
+  }
+  glowNotes = [];
+  sparks = [];
+  if (pathSpark) pathSpark.innerHTML = "";
+  document.getElementById("board")?.classList.remove("playing");
 }
 
 /**
- * @param points   where each note sits, in playing order
+ * @param cells    the run's notes, in playing order
  * @param startsAt when the first note lands, on the audio clock
  * @param gap      seconds between notes
  */
-function startPlayhead(points, startsAt, gap) {
+function startPlayhead(cells, startsAt, gap) {
   stopPlayhead();
-  if (!pathPlay || points.length < 2 || !gap) return;
+  if (!pathSpark || cells.length < 2 || !gap) return;
 
-  const { at, total } = noteDistances(points);
-  if (total === 0) return;
+  const points = cells.map(c => ({ x: fretX(c.fret, c.string), y: stringY(c.string) }));
 
-  pathPlay.setAttribute("points", asPoints(points));
-  // Drawn as one dash the length of the whole line, pushed out of sight
-  // and then pulled back in — which is cheaper than rewriting the points
-  // sixty times a second, and keeps the corners mitred as it grows.
-  pathPlay.setAttribute("stroke-dasharray", `${total} ${total}`);
-  pathPlay.setAttribute("stroke-dashoffset", total);
-  pathPlay.setAttribute("opacity", 1);
+  // Which way each step travels, taken from the same split that coloured
+  // the line underneath — so what lights up is that line at full strength
+  // rather than a differently-coloured marker laid over it.
+  const stepDir = new Array(points.length - 1).fill(1);
+  for (const seg of runSegments(cells)) {
+    for (let k = seg.from; k < seg.to; k++) stepDir[k] = seg.dir;
+  }
+
+  for (let k = 0; k + 1 < points.length; k++) {
+    const len = Math.hypot(points[k + 1].x - points[k].x, points[k + 1].y - points[k].y);
+    const line = el("polyline", {
+      class: `path-spark ${stepDir[k] > 0 ? "is-asc" : "is-desc"}`,
+      points: asPoints([points[k], points[k + 1]]),
+      fill: "none", "stroke-width": 4,
+      "stroke-linecap": "round", "stroke-linejoin": "round", opacity: 0,
+    });
+    // Two notes on the same spot — the same pitch found twice on the neck
+    // — have no line between them to draw.
+    if (len > 0) {
+      line.setAttribute("stroke-dasharray", `${len} ${len}`);
+      line.setAttribute("stroke-dashoffset", len);
+    }
+    pathSpark.appendChild(line);
+    sparks.push({ el: line, len });
+  }
+
+  // The markers the run lights, and when each is struck. A run that
+  // doubles back sounds the same spot more than once, so a marker keeps
+  // every strike that belongs to it and takes the brightest.
+  const seen = new Map();
+  cells.forEach((c, i) => {
+    const id = cellId(c);
+    let entry = seen.get(id);
+    if (!entry) {
+      const rec = byPosition.get(id);
+      if (!rec) return;
+      entry = { id, rec, strikes: [] };
+      seen.set(id, entry);
+      glowNotes.push(entry);
+    }
+    entry.strikes.push(i);
+  });
+
+  document.getElementById("board").classList.add("playing");
+  for (const { rec } of glowNotes) rec.group.style.opacity = PLAY_GHOST;
 
   const last = points.length - 1;
+  const tail = Math.max(NOTE_DECAY, LINE_DECAY);
   const step = () => {
     // Where we are in notes, not in pixels: 2.5 means halfway from the
     // third note to the fourth.
-    let pos = (clock() - startsAt) / gap;
-    pos = Math.min(last, Math.max(0, pos));
-    // Asked for less movement: the line steps from note to note instead
+    let pos = Math.max(0, (clock() - startsAt) / gap);
+    // Asked for less movement: the light steps from note to note instead
     // of sliding between them, so it still says where the run is up to
     // without anything gliding.
     if (!wantsMotion()) pos = Math.floor(pos);
 
-    const i = Math.min(last - 1, Math.floor(pos));
-    const drawn = at[i] + (at[i + 1] - at[i]) * (pos - i);
-    pathPlay.setAttribute("stroke-dashoffset", total - drawn);
+    for (let k = 0; k < sparks.length; k++) {
+      const { el: line, len } = sparks[k];
+      if (pos <= k) { line.setAttribute("opacity", 0); continue; }
+      // Drawn in over the whole of note k's duration, then let go once
+      // the note at its far end has landed.
+      if (len > 0) line.setAttribute("stroke-dashoffset", len * (1 - Math.min(1, pos - k)));
+      line.setAttribute("opacity", pos <= k + 1 ? 1 : decay((pos - k - 1) / LINE_DECAY));
+    }
 
-    if (pos < last) playAnim = requestAnimationFrame(step);
-    else playAnim = null;
+    for (const { rec, strikes } of glowNotes) {
+      let glow = 0;
+      for (const i of strikes) {
+        if (pos < i) break;
+        glow = Math.max(glow, noteGlow((pos - i) / NOTE_DECAY));
+      }
+      rec.group.style.opacity = PLAY_GHOST + (1 - PLAY_GHOST) * glow;
+    }
+
+    // Kept alive past the last note so the tail can finish. Nothing is
+    // sounding by then; this is the run dying away on the board the way
+    // it is dying away in the ear.
+    if (pos < last + tail) { playAnim = requestAnimationFrame(step); return; }
+    playAnim = null;
+    stopPlayhead();
   };
   playAnim = requestAnimationFrame(step);
 }
@@ -1302,16 +1621,19 @@ async function playRun() {
     onNote: n => showSounding(n ? new Set([n.key]) : new Set()),
     onEnd: () => {
       player = null; playerKind = null;
-      stopPlayhead();
+      // The light is left to finish. The last note is still ringing when
+      // the schedule runs out, and cutting the board to full brightness
+      // on that beat would end the run before it has ended. It tidies
+      // itself up when the tail is spent — and a Stop, which really is an
+      // end, goes through stopSound and takes it down at once.
       syncPlayButton();
     },
   });
 
   // Drawn against the same schedule the notes were scheduled on, so the
-  // line and the sound are two readings of one clock rather than two
+  // light and the sound are two readings of one clock rather than two
   // timers that happen to have been started together.
-  startPlayhead(pathResult.cells.map(c => ({ x: fretX(c.fret, c.string), y: stringY(c.string) })),
-                player.startsAt, player.gap);
+  startPlayhead(pathResult.cells, player.startsAt, player.gap);
   playerKind = "run";
   syncPlayButton();
 }
@@ -1960,15 +2282,26 @@ function render({ animate = true } = {}) {
     if (cell) visibleCells.add(`${s}:${f}`);
   }));
   // A run drawn before the position moved may no longer be playable here.
-  if (pathOn && pathFrom && !visibleCells.has(cellId(pathFrom))) clearPath();
-  if (pathOn && pathTo && !visibleCells.has(cellId(pathTo))) { pathTo = null; pathStops = []; pathResult = null; }
-  if (pathOn && pathStops.length) {
-    const kept = pathStops.filter(s => visibleCells.has(cellId(s)));
-    if (kept.length !== pathStops.length) { pathStops = kept; recomputePath({ force: true }); }
+  // Whichever links of the chain the new shape still holds are kept, so
+  // stepping between positions trims the phrase rather than wiping it.
+  if (pathOn && pathChain.length) {
+    const kept = pathChain.filter(c => visibleCells.has(cellId(c)));
+    if (kept.length !== pathChain.length) {
+      pathChain = kept;
+      pathHeld = [];
+      growFrom = null;
+      recomputePath({ force: true });
+    } else {
+      const held = pathHeld.map(stops => (stops ?? []).filter(s => visibleCells.has(cellId(s))));
+      if (held.some((stops, i) => stops.length !== (pathHeld[i]?.length ?? 0))) {
+        pathHeld = held;
+        recomputePath({ force: true });
+      }
+    }
   }
 
   // Nothing picked yet, and a shape is on screen: trace all of it.
-  if (pathOn && box && !pathFrom && !pathTo && !skipAutoPath) {
+  if (pathOn && box && !pathChain.length && !skipAutoPath) {
     autoPathForPosition(grid);
   }
 
@@ -1980,12 +2313,15 @@ function render({ animate = true } = {}) {
   const pathLabel = document.getElementById("pathLabel");
   if (pathLabel) {
     if (!pathOn) pathLabel.textContent = "";
-    else if (!pathFrom) pathLabel.textContent = "Click a note to start a run";
-    else if (!pathTo) pathLabel.textContent = "Now click the note to finish on";
-    else if (!pathResult) pathLabel.textContent = "No playable run between those two";
-    // Once the run is on the board there is nothing to add: how many
-    // notes it holds and how far it reaches are both plainly visible,
-    // and the held notes say so themselves with their rings.
+    else if (!pathChain.length) pathLabel.textContent = "Click a note to start a run";
+    else if (pathChain.length === 1) pathLabel.textContent = "Now click the note to finish on";
+    else if (!pathResult) pathLabel.textContent = "No playable run through those notes";
+    // The run is on the board and the one thing not visible about it is
+    // that it can be carried on. Said once, on the first complete run,
+    // and then dropped — by the third note it has been discovered, and
+    // how many notes the run holds and how far it reaches are both
+    // plainly visible anyway.
+    else if (pathChain.length === 2) pathLabel.textContent = "Click another note to carry the run on";
     else pathLabel.textContent = "";
   }
   syncPlayButton();
@@ -2086,14 +2422,17 @@ function syncCagedControls() {
   // mode, so it can't be printed once and left there.
   const tone = document.getElementById("legendTone");
   const tip  = document.getElementById("legendTip");
+  const runLegend = document.getElementById("runLegend");
   if (tone) tone.textContent = (chords || walk) ? "Chord tone" : "Scale tone";
+  // The two run colours mean nothing where there is no run to colour.
+  if (runLegend) runLegend.style.display = pathOn ? "flex" : "none";
   if (tip) {
     tip.textContent = walk
       ? "Step through the progression · the grips are chosen to keep the hand still"
       : chords
         ? (ghostOn ? "Click a note to silence it, or a faint one to play it instead"
                    : "Step through the grips, or drag the bar along the neck")
-        : "Click two notes to trace a run · drag any note to reshape it";
+        : "Click notes to chain a run · drag one to hold the run through it";
   }
 
   // Strumming is a chord idea too. Leaving chord mode leaves no grip to
@@ -2157,7 +2496,7 @@ function switchInstrument(id) {
   // including the ones the diffing renderer thinks it still owns.
   liveNotes.clear();
   byPosition.clear();
-  linePoints = [];
+  lineSegs = [];
   lineShown = false;
 
   drawBoard();

@@ -20,6 +20,12 @@
   --band-5: #2e9d8f;   /* teal     */
   --band-6: #1d6a78;   /* deep sea */
 
+  /* Band 6 raised until it reads against ebony. The board is dark, and
+     deep sea on it is nearly the board — so a run needs the sky above
+     that sea rather than the sea itself. Still band 6's hue, so it sits
+     inside the palette rather than beside it. */
+  --band-6-lit: #6cc5d8;
+
   /* Band 4 is cream, and in day mode cream is the paper — the stripe
      would show a gap where it fell. So the stripe keeps its own fourth
      colour and swaps in the reference's olive when the page is pale.
@@ -62,11 +68,18 @@
      with them are further down, under NOTES ON THE BOARD. */
   --pos-bar: var(--band-2);        /* the sliding position bar         */
   --pos-bar-ink: var(--on-band);   /* the fret range printed on it     */
-  --path-line: var(--band-4);      /* the line joining the run         */
-  --path-play: var(--band-2);      /* the playhead travelling along it */
+  /* The run is drawn in the direction it travels: warm going up, cool
+     coming down. One colour for the line and the notes under it, so a
+     stretch of the run reads as one object rather than as a line with
+     unrelated markers on it. */
+  --path-asc: var(--band-2);       /* climbing — orange                */
+  --path-desc: var(--band-6-lit);  /* falling — the lit sea            */
+  /* How far the run recedes while it plays, so that only the note under
+     the ear is at full strength. JS mirrors this — see PLAY_GHOST. */
+  --play-ghost: 0.18;
   --barre: var(--band-2);          /* the finger lying across a fret    */
-  --ring-end: var(--band-5);       /* the two notes you chose          */
-  --ring-path: var(--band-4);      /* notes the run passes through     */
+  --ring-end: var(--band-5);       /* the notes you chose              */
+  --ring-turn: var(--band-5);      /* one you chose, mid-run           */
   --ring-pinned: var(--band-4);    /* slid into place, dotted ring     */
   --ring-locked: var(--band-4);    /* held firmly, dashed ring         */
   --ring-sounding: var(--band-4);  /* the note you're hearing, mid-run */
@@ -507,6 +520,10 @@ input[type="range"]::-moz-range-thumb {
   vertical-align: middle;
 }
 
+/* The run's two directions, kept together so they read as one pair —
+   the whole point of them is the contrast. */
+.legend-run { display: flex; gap: 20px; align-items: center; }
+
 .legend-tip { margin-left: auto; letter-spacing: 0.08em; }
 
 /* ============================================================
@@ -534,24 +551,70 @@ input[type="range"]::-moz-range-thumb {
 /* Notes not taking part in the run recede but stay visible. */
 .note.is-muted { opacity: 0.22 !important; }
 
-/* Endpoints get a ring so they read as chosen, not just coloured. The
-   teal band is used nowhere else on the board, so the two notes that
-   define the run are the two that can't be mistaken for anything. */
+/* The notes you picked get a ring so they read as chosen, not just
+   coloured. The teal band is used nowhere else on the board, so the notes
+   that define the run are the ones that can't be mistaken for anything. */
 .note.is-start .note-circle,
 .note.is-target .note-circle {
   stroke: var(--ring-end);
   stroke-width: 3.5;
 }
 
-/* Everything the run passes through is ringed in cream — the same ink
-   as the line joining them. */
-.note.is-path .note-circle { stroke: var(--ring-path); stroke-width: 2.5; }
+/* A note picked mid-phrase: where one leg lands and the next sets off
+   from. Teal, because you chose it like the other two — but broken into
+   long dashes, because it is a joint rather than an end. */
+.note.is-turn .note-circle {
+  stroke: var(--ring-turn);
+  stroke-width: 3.5;
+  stroke-dasharray: 9 3;
+}
 
-/* The line itself. Its colour lives here beside the rings; how visible
-   it is lives in view.js as LINE_OPACITY, because the line fades away
-   entirely when there is no run — that part is state, not styling. */
-#pathLayer polyline { stroke: var(--path-line); }
-#pathLayer .path-play { stroke: var(--path-play); }
+/* Everything the run passes through is ringed in the colour of the line
+   that reaches it, so the way the hand is going is legible from the notes
+   alone — warm climbing, cool falling. */
+.note.is-path.is-asc  .note-circle { stroke: var(--path-asc);  stroke-width: 2.5; }
+.note.is-path.is-desc .note-circle { stroke: var(--path-desc); stroke-width: 2.5; }
+
+/* The line itself, one stretch per direction of travel. Its colour lives
+   here beside the rings; how visible it is lives in view.js as
+   LINE_OPACITY, because the line fades away entirely when there is no
+   run — that part is state, not styling. */
+#pathRun .path-seg.is-asc  { stroke: var(--path-asc); }
+#pathRun .path-seg.is-desc { stroke: var(--path-desc); }
+
+/* ---- While the run plays ----------------------------------- */
+/* The board stops answering. What is on it while a run plays is a
+   performance of the run, not the run itself — the markers are dimmed,
+   moving, and in the case of the ones off the run not there at all, so
+   nothing you could aim at is where it looks like it is. Stop the run and
+   the board is a board again. */
+#board.playing { pointer-events: none; }
+
+/* The run recedes to a ghost of itself, so the only thing at full
+   strength on the board is what is under the ear right now. */
+#board.playing #pathRun .path-seg { opacity: var(--play-ghost); }
+
+/* Notes the run never touches leave the board entirely. Held back they
+   are still shapes on a neck, and at this point they are answering a
+   question nobody is asking — what is being played is the run, and every
+   other marker is something to read past. Away, the phrase is the only
+   thing there, and it comes back the moment the run stops. */
+#board.playing .note.is-muted { opacity: 0 !important; }
+
+/* The lit pieces: the same line at full strength, one per step, drawn in
+   as the run crosses each and fading once the far note is reached. Their
+   opacity is set from the audio clock frame by frame, so nothing here may
+   transition it — a transition would lag the sound. */
+#pathSpark .path-spark { transition: none; }
+#pathSpark .path-spark.is-asc  { stroke: var(--path-asc); }
+#pathSpark .path-spark.is-desc { stroke: var(--path-desc); }
+
+/* The markers of the run dim and light on the same clock, written straight
+   onto each one, so their opacity must not be eased — a transition would
+   lag the sound and smear the decay. The notes leaving the board are not
+   on that clock, so they keep the ordinary fade and go quietly rather
+   than blinking out. */
+#board.playing .note:not(.is-muted) { transition: transform var(--slide); }
 
 /* A pinned note — slid into place, but it gives way when an end moves.
    Thin dotted ring: held, lightly. */
@@ -570,13 +633,11 @@ input[type="range"]::-moz-range-thumb {
 }
 
 /* Every note of a run can be slid; clicking locks it in place. */
-#board.picking .note.is-start,
-#board.picking .note.is-target,
+#board.picking .note.is-anchor,
 #board.picking .note.is-locked,
 #board.picking .note.is-pinned,
 #board.picking .note.is-path { cursor: grab; }
-#board.picking .note.is-start:active,
-#board.picking .note.is-target:active,
+#board.picking .note.is-anchor:active,
 #board.picking .note.is-locked:active,
 #board.picking .note.is-pinned:active,
 #board.picking .note.is-path:active { cursor: grabbing; }
@@ -598,6 +659,20 @@ input[type="range"]::-moz-range-thumb {
 }
 .note.is-sounding .note-circle { transition: transform 60ms ease-out; }
 
+/* ---- The note just picked ---------------------------------- */
+/* It swells and settles, the way a plucked string does — a moment's
+   confirmation that the click landed on this note and not its neighbour.
+   The new leg of the run grows out of it at the same time, so the two
+   together say where the run has just been carried on from. */
+@keyframes pick-pop {
+  0%   { transform: scale(1); }
+  38%  { transform: scale(1.44); }
+  100% { transform: scale(1); }
+}
+.note.is-picked .note-circle {
+  animation: pick-pop 460ms cubic-bezier(0.22, 0.9, 0.3, 1);
+}
+
 /* ---- Position cycling animation ---------------------------- */
 /* Ease in and out: notes gather speed leaving a fret and settle
    gently into the next one. */
@@ -611,11 +686,13 @@ input[type="range"]::-moz-range-thumb {
 }
 
 /* The run's line is a list of points, so JS steps it along the same curve
-   the notes use. Only its appearing and disappearing is left to CSS: a
-   run showing up somewhere new should fade in there, not skate across
-   the neck from wherever the last one happened to end. */
+   the notes use. Only its appearing, disappearing and changing colour are
+   left to CSS: a run showing up somewhere new should fade in there, not
+   skate across the neck from wherever the last one happened to end — and
+   a stretch that turns from climbing to falling should change colour over
+   the same beat as the notes it joins slide to their new frets. */
 #pathLayer polyline { transition: opacity var(--fade); }
-#pathLayer .path-play { transition: none; }
+#pathRun .path-seg { transition: opacity var(--fade), stroke var(--slide); }
 
 /* ---- Window handle ----------------------------------------- */
 /* A bar above the neck, dragged along it to pick a stretch. It slides by
@@ -676,5 +753,7 @@ input[type="range"]::-moz-range-thumb {
   body { transition: none; }
   .note, .note-circle, #posHighlight { transition: opacity var(--fade); }
   .note.is-sounding .note-circle { transition: none; transform: none; }
+  .note.is-picked .note-circle { animation: none; }
+  #pathRun .path-seg { transition: opacity var(--fade); }
   .win-handle, .win-handle .bar { transition: none; }
 }

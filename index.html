@@ -128,6 +128,12 @@
     <div class="legend">
       <span><span class="swatch" style="background:var(--root)"></span>Root</span>
       <span><span class="swatch" style="background:var(--note)"></span><span id="legendTone">Scale tone</span></span>
+      <!-- Which way the run is going. Only meaningful where there is a
+           run, so it comes and goes with one — see syncCagedControls. -->
+      <span id="runLegend" class="legend-run">
+        <span><span class="swatch" style="background:var(--path-asc)"></span>Climbing</span>
+        <span><span class="swatch" style="background:var(--path-desc)"></span>Falling</span>
+      </span>
       <span class="legend-tip" id="legendTip"></span>
     </div>
 

@@ -121,6 +121,141 @@ export function pitchAt(cell) {
   return midiAt(cell.string, cell.fret);
 }
 
+// ============================================================
+// RUNS  (a chain of paths, joined end to end)
+// ============================================================
+//
+// A path joins two notes. A phrase joins several: you pick where to
+// start, where to land, and then where to go from there — and the note
+// you just landed on is where the next leg begins. So a run is a chain of
+// notes, and the legs between them are what gets solved.
+//
+// Nothing here knows about screens. A leg is solved exactly as a lone
+// path is; the chain only decides which pairs get handed to the search,
+// and hands back enough about each leg for a renderer to draw it.
+
+const cellKey = c => `${c.string}:${c.fret}`;
+
+/**
+ * Add a note to a run's chain.
+ *
+ * The rule is the whole idea in one line: the note picked last is where
+ * the new leg starts, and the note just picked is where it ends. So the
+ * first pick opens the chain, the second closes the first leg, and every
+ * pick after that hangs another leg off the end of it.
+ *
+ * @param {Array<{string,fret}>} chain  the notes picked so far
+ * @returns {Array<{string,fret}>} a new chain — the old one is untouched
+ */
+export function extendChain(chain, cell) {
+  const next = { string: cell.string, fret: cell.fret };
+  if (!chain.length) return [next];
+  // Picking the note the chain already ends on asks for a leg of no
+  // length, which is not a leg.
+  if (cellKey(chain[chain.length - 1]) === cellKey(next)) return chain.slice();
+  return [...chain, next];
+}
+
+/**
+ * One leg of a run, with its held notes put in playing order.
+ *
+ * A stop that cannot be honoured is let go rather than failing the leg:
+ * pins first, then the newest lock, so a deliberate hold outlives an
+ * incidental one. Whatever survives comes back with the leg, because the
+ * caller is drawing rings on those notes and must not go on drawing them
+ * around a note the run no longer visits.
+ */
+function solveLeg(root, type, from, to, stops, only) {
+  const ends = new Set([cellKey(from), cellKey(to)]);
+  // A stop sitting on one of this leg's own ends has nothing to join.
+  let held = stops.filter(s => !ends.has(cellKey(s)));
+  const ascending = pitchAt(to) >= pitchAt(from);
+
+  while (true) {
+    const inOrder = held.slice().sort((a, b) =>
+      ascending ? pitchAt(a) - pitchAt(b) : pitchAt(b) - pitchAt(a));
+    const leg = findPathThrough(root, type, [from, ...inOrder, to], only);
+    if (leg) return { leg, held };
+    if (!held.length) return { leg: null, held };
+    // Give up a pin before a lock.
+    const loosest = held.map((s, i) => [s, i]).filter(([s]) => !s.locked).pop()
+                 ?? held.map((s, i) => [s, i]).pop();
+    held = held.filter((_, i) => i !== loosest[1]);
+  }
+}
+
+/**
+ * The whole run: every leg of the chain, solved and stitched together.
+ *
+ * The legs share their joints — the note ending one leg is the note
+ * beginning the next — so `cells` counts each joint once and reads as a
+ * single stream of notes in playing order, which is what gets played and
+ * what gets drawn.
+ *
+ * @param {Array<{string,fret}>} chain  the notes picked, in order
+ * @param {Array<Array<{string,fret,locked}>>} stops  held notes, one
+ *        list per leg: stops[i] shapes the leg from chain[i] to chain[i+1]
+ * @param {Set<string>} [only]  cells the run may use — a position's shape
+ * @returns {{legs, held, cells, cost} | null}
+ */
+export function findRun(root, type, chain, stops = [], only = null) {
+  if (!chain || chain.length < 2) return null;
+
+  const legs = [], cells = [], held = [];
+  let cost = 0;
+  for (let i = 0; i + 1 < chain.length; i++) {
+    const solved = solveLeg(root, type, chain[i], chain[i + 1], stops[i] ?? [], only);
+    held.push(solved.held);
+    if (!solved.leg) return null;
+    // Where this leg starts in the stitched stream. The joint belongs to
+    // the leg before it as much as to this one, so it is counted here as
+    // the leg's first note rather than skipped over.
+    const at = cells.length ? cells.length - 1 : 0;
+    legs.push({ ...solved.leg, from: chain[i], to: chain[i + 1], at });
+    cells.push(...(cells.length ? solved.leg.cells.slice(1) : solved.leg.cells));
+    cost += solved.leg.cost;
+  }
+  return { legs, held, cells, cost };
+}
+
+/**
+ * Cut a run into stretches that travel one way.
+ *
+ * A leg climbs or falls throughout — its notes are every scale tone
+ * between its ends, in order — but a run made of several legs turns
+ * around wherever you asked it to, and a held note can turn a leg around
+ * too. Which direction the hand is going is worth seeing, so it is worked
+ * out here from the pitches themselves rather than assumed from the ends.
+ *
+ * The note a run turns on belongs to both stretches, so the pieces join
+ * rather than leaving a gap where the direction changed.
+ *
+ * @returns {Array<{dir: 1|-1, from:number, to:number, cells:Array}>}
+ *          indices are into `cells`, so a caller can tell which part of
+ *          the run a stretch is
+ */
+export function runSegments(cells) {
+  if (!cells || cells.length < 2) return [];
+  const pitch = c => c.midi ?? pitchAt(c);
+
+  const out = [];
+  let start = 0, dir = 0;
+  for (let i = 1; i < cells.length; i++) {
+    // Two ways of sounding one pitch — open B and the G string's fourth
+    // fret — are a real move on the neck but no move in pitch, so they
+    // carry on in whatever direction the run was already going.
+    const step = Math.sign(pitch(cells[i]) - pitch(cells[i - 1]));
+    const here = step === 0 ? (dir || 1) : step;
+    if (dir === 0) { dir = here; continue; }
+    if (here === dir) continue;
+    out.push({ dir, from: start, to: i - 1, cells: cells.slice(start, i) });
+    start = i - 1;                       // the turning note is in both
+    dir = here;
+  }
+  out.push({ dir: dir || 1, from: start, to: cells.length - 1, cells: cells.slice(start) });
+  return out;
+}
+
 // The search proper. `window`, when given, confines every note to one
 // stationary hand position.
 function searchPath(root, type, from, to, only, window) {
