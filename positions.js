@@ -9,7 +9,7 @@
 
 import { noteToPc, getScalePcs, midiToPc } from "./theory.js";
 import {
-  instrument, chromaticGrid, numFrets, numStrings, droneStrings,
+  chromaticGrid, numFrets, numStrings, droneStrings, cagedShapes,
   buildScaleGrid, tightSpan, positionSpan, capoFret, fretUnderHand, handFret,
 } from "./fretboard.js";
 
@@ -54,9 +54,10 @@ const MODE_TO_PARENT = {
 };
 
 // CAGED is only meaningful for the natural modes, and only on an
-// instrument that has the shapes at all — see INSTRUMENTS above.
+// instrument tuned so that it has the shapes at all — see cagedShapes()
+// in the fretboard model, and the INSTRUMENTS table it reads.
 export function supportsCaged(type) {
-  return instrument.caged && (type in MODE_TO_PARENT);
+  return cagedShapes() && (type in MODE_TO_PARENT);
 }
 
 /**

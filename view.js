@@ -19,6 +19,17 @@ import {
   instrument,
   supportsKind,
   tuning,
+  tuningsFor,
+  tuningId,
+  tuningOffsets,
+  setTuning,
+  setTuningOffsets,
+  retuneString,
+  isStandardTuning,
+  MAX_DETUNE,
+  openMidi,
+  FLAT_NAMES,
+  midiToPc,
   numFrets,
   numStrings,
   chromaticGrid,
@@ -33,7 +44,7 @@ import {
   spikeRange,
   spikeFrets,
   barFret,
-  barsKey,
+  neckKey,
   handAtNut,
   fretUnderHand,
   handFret,
@@ -925,6 +936,117 @@ function moveSpike(string, fret) {
   syncBars();
   syncCagedControls();
   render();
+}
+
+// ---- The tuning -------------------------------------------
+/**
+ * Turn the pegs, and throw away everything that was measured against
+ * where they used to be.
+ *
+ * Exactly what moving the capo throws away, for exactly the same reason:
+ * the strings sound something else now, so a run through notes that may
+ * not exist, a grip edited by hand, and every cached search are all
+ * answers about an instrument that is no longer here.
+ *
+ * The board is not redrawn — the neck is the same neck, and syncBars
+ * already puts the new open notes beside the nut. What has to be found
+ * again are the positions, since a retuned string reshapes every one of
+ * them; the hand stays where it is and the nearest is picked, the same
+ * as under a moving bar.
+ *
+ * @param {Function} turn  the model call that actually retunes
+ */
+function retune(turn) {
+  stopSound();
+  turn();
+
+  clearPath();
+  visibleCells = null;
+  gripEdit = null;
+  ghostCells = new Set();
+  voicingCache = { key: null, whole: null, shell: null };
+  fragmentCache = { key: null, list: [] };
+  progressionCache = { key: null, chords: [] };
+  seekAnchor = !isChordMode() && !isProgressionMode();
+
+  // Which instrument is in which tuning outlives the tab, the same way a
+  // guitar left in drop D is still in drop D in the morning. The offsets
+  // are the whole fact — what the tuning is called is derived from them.
+  saveSetting("tunings", { ...(loadSettings().tunings ?? {}), [instrument.id]: tuningOffsets });
+
+  syncBars();
+  syncTuning();
+  syncCagedControls();
+  render();
+}
+
+/** The tunings this instrument offers, plus the one it is in. */
+function fillTuningMenu() {
+  const sel = document.getElementById("tuning");
+  sel.innerHTML = "";
+  tuningsFor(instrument).forEach(t => sel.appendChild(new Option(t.name, t.id)));
+  // Only ever listed when it is what is actually on the instrument:
+  // "Custom" is somewhere the pegs take you, not something to choose.
+  if (tuningId === "custom") sel.appendChild(new Option("Custom", "custom"));
+  sel.value = tuningId;
+}
+
+/** A note as a player would name a string: pitch and octave. */
+function pitchName(midi) {
+  return FLAT_NAMES[midiToPc(midi)] + (Math.floor(midi / 12) - 1);
+}
+
+// The peg row is asked for rather than always shown — a named tuning
+// needs nothing from it. It opens itself for a custom one, which cannot
+// be read off the menu.
+let pegsOpen = false;
+
+/** One machine head per string, low on the left. */
+function renderPegs() {
+  const row = document.getElementById("pegs");
+  row.innerHTML = "";
+  for (let s = 0; s < numStrings; s++) {
+    const peg = document.createElement("span");
+    peg.className = "peg" + (tuningOffsets[s] ? " detuned" : "");
+
+    const step = (by, glyph) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "btn btn-icon";
+      b.textContent = glyph;
+      const to = tuningOffsets[s] + by;
+      // The pegs run out eventually, and a button that does nothing
+      // should look like one.
+      b.disabled = Math.abs(to) > MAX_DETUNE;
+      b.title = `${pitchName(openMidi[s])} — ${by < 0 ? "down" : "up"} a semitone`;
+      b.addEventListener("click", () => retune(() => retuneString(s, to)));
+      return b;
+    };
+
+    const note = document.createElement("span");
+    note.className = "peg-note";
+    note.textContent = pitchName(openMidi[s]);
+    // What this string started as, for a player wondering how far they
+    // have wandered from it.
+    note.title = tuningOffsets[s]
+      ? `${pitchName(instrument.openMidi[s])} in standard tuning`
+      : "As the instrument is tuned";
+
+    peg.append(step(-1, "‹"), note, step(1, "›"));
+    row.appendChild(peg);
+  }
+}
+
+/** Put the tuning controls where the model actually is. */
+function syncTuning() {
+  fillTuningMenu();
+  // A tuning with no name has nothing to read but the pegs, so they open
+  // themselves — a board that quietly changed key with no control on
+  // screen saying why would be the app lying about the instrument.
+  const open = pegsOpen || tuningId === "custom";
+  document.getElementById("tuningEdit").classList.toggle("on", open);
+  document.getElementById("pegsBtn").classList.toggle("active", open);
+  if (open) renderPegs();
 }
 
 // ============================================================
@@ -2095,7 +2217,7 @@ let progressionCache = { key: null, chords: [] };
 // the same question of it — whether the route on screen is still the one
 // being stepped through — and two spellings of this that drift apart
 // leave the stepper resetting to the first chord on every draw.
-const progressionKey = (root, type, at) => `${root}|${type}|${barsKey()}|${at}`;
+const progressionKey = (root, type, at) => `${root}|${type}|${neckKey()}|${at}`;
 function progressionFor(key, name, window = null) {
   const cacheKey = progressionKey(key, name, window ? window.lo : "free");
   if (progressionCache.key !== cacheKey) {
@@ -2296,7 +2418,7 @@ let voicingCache = { key: null, whole: null, shell: null };
 function voicingsFor(root, type, openAnywhere, { relaxed = false } = {}) {
   // The capo is part of the question: it changes what every string can
   // sound, so grips found under one are not answers about another.
-  const key = `${root}|${type}|${openAnywhere}|${barsKey()}`;
+  const key = `${root}|${type}|${openAnywhere}|${neckKey()}`;
   if (voicingCache.key !== key) voicingCache = { key, whole: null, shell: null };
   const slot = relaxed ? "shell" : "whole";
   // The shell search is a second walk of the whole neck, so it is only
@@ -2318,7 +2440,7 @@ function voicingsFor(root, type, openAnywhere, { relaxed = false } = {}) {
  */
 let fragmentCache = { key: null, list: [] };
 function fragmentsFor(root, type, lo, hi, openAnywhere) {
-  const key = `${root}|${type}|${openAnywhere}|${barsKey()}|${lo}|${hi}`;
+  const key = `${root}|${type}|${openAnywhere}|${neckKey()}|${lo}|${hi}`;
   if (fragmentCache.key !== key) {
     fragmentCache = { key, list: fragmentVoicings(root, type, { lo, hi, openAnywhere }) };
   }
@@ -2768,7 +2890,13 @@ function syncCagedControls() {
       ? "Chords are shown one grip at a time — step through them with the arrows"
       : caged
         ? "Show one CAGED shape at a time"
-        : "CAGED doesn't apply to this scale — showing playable hand positions";
+        // Two different reasons the shapes are off the table, and saying
+        // the wrong one is worse than saying nothing: a player who has
+        // just dropped the 6th string a tone and is told it's the scale's
+        // fault will go looking for the problem in the wrong place.
+        : instrument.caged && !isStandardTuning()
+          ? "The CAGED shapes are standard tuning's — showing playable hand positions"
+          : "CAGED doesn't apply to this scale — showing playable hand positions";
   btn.classList.toggle("active", chords || walk || cagedOn);
   btn.textContent = walk ? "Chords" : chords ? "Voicings" : caged ? "CAGED" : "Positions";
   nav.style.display = (chords || walk || cagedOn) ? "flex" : "none";
@@ -2899,6 +3027,10 @@ function switchInstrument(id) {
   const kind = fillKindMenu();
   fillMaterialMenu(kind);
   syncMasthead();
+  // Whatever this one was last left tuned to, and its own pegs — a
+  // different instrument has a different number of them, and a different
+  // list of tunings to offer.
+  syncTuning();
   syncCagedControls();
   render({ animate: false });
 }
@@ -3059,6 +3191,17 @@ function initControls() {
     saveSetting("capo", capoFret);
   });
 
+  // A named tuning, straight from the instrument's own list.
+  document.getElementById("tuning").addEventListener("change", e => {
+    retune(() => setTuning(e.target.value));
+  });
+  // And the pegs, for one that isn't named.
+  document.getElementById("pegsBtn").addEventListener("click", () => {
+    pegsOpen = !pegsOpen;
+    syncTuning();
+  });
+  syncTuning();
+
   document.getElementById("openBtn").addEventListener("click", () => {
     openOn = !openOn;
     posIndex = 0;   // a different set of grips — start at the top of it
@@ -3105,6 +3248,13 @@ function initControls() {
 // guitar and immediately redrawing as something else.
 if (saved.instrument && saved.instrument !== instrument.id && INSTRUMENTS[saved.instrument]) {
   setInstrument(saved.instrument);
+}
+// An instrument stays tuned the way it was left, and every instrument
+// separately — so these are restored for all of them, not only for the
+// one being picked up now. Anything that doesn't fit the instrument any
+// more is clamped or ignored by the model.
+for (const [id, offsets] of Object.entries(saved.tunings ?? {})) {
+  if (INSTRUMENTS[id] && Array.isArray(offsets)) setTuningOffsets(offsets, INSTRUMENTS[id]);
 }
 // A capo is left on the instrument between sessions, the same as it is
 // left on a real one. The grid has to know before anything is drawn.

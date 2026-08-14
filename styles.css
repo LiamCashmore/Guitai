@@ -486,6 +486,35 @@ input[type="range"]::-moz-range-thumb {
    forbidden — the notes are yours to choose. */
 #posLabel.unplayable { color: var(--band-1); }
 
+/* ---- The pegs ---------------------------------------------- */
+/* One machine head per string, and they read left to right the way a
+   player says a tuning out loud: low string first. Folded away unless
+   asked for, since a named tuning needs none of this. */
+#tuningEdit { display: none; }
+#tuningEdit.on { display: flex; }
+
+.peg { display: inline-flex; align-items: center; gap: 1px; }
+
+/* Small enough that six of them are a row rather than a second panel. */
+.peg .btn-icon {
+  min-width: 22px;
+  padding: 3px 5px;
+  font-size: 15px;
+}
+
+.peg-note {
+  min-width: 30px;
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* A string that has been moved off its own pitch says so — which is the
+   whole of what a custom tuning is. */
+.peg.detuned .peg-note { color: var(--readout-strong); font-weight: 700; }
+
 /* ---- The board --------------------------------------------- */
 .board-wrap {
   overflow-x: auto;
@@ -800,6 +829,12 @@ input[type="range"]::-moz-range-thumb {
   /* Fingers, not pointers. */
   button, select { min-height: 44px; }
   .btn-icon { min-width: 44px; }
+
+  /* Except the pegs, where six strings' worth of arrows have to fit
+     across a phone. They keep the tall target and give up the width,
+     and the row wraps rather than scrolls. */
+  .peg .btn-icon { min-width: 30px; padding: 3px; }
+  #pegs { gap: 6px; }
 
   .legend-tip { display: none; }
 }

@@ -82,6 +82,28 @@
         <label for="capoBtn">Capo</label>
         <button id="capoBtn" class="btn" type="button">Off</button>
       </div>
+
+      <!-- How the instrument itself is tuned. Like the capo, and unlike
+           everything else in this panel, it isn't a way of looking at the
+           board — it changes what the strings sound, and the board is
+           derived from that. The named tunings are here; the pegs beside
+           them are for one that isn't named. -->
+      <div class="field">
+        <label for="tuning">Tuning</label>
+        <div class="cluster">
+          <div class="select select-compact"><select id="tuning"></select></div>
+          <button id="pegsBtn" class="btn" type="button"
+                  title="Tune string by string">Pegs</button>
+        </div>
+      </div>
+
+      <!-- One peg per string, low on the left — the order a player says a
+           tuning out loud in. Filled in from the instrument, since how
+           many there are is its business. -->
+      <div class="field wide" id="tuningEdit">
+        <label>Strings</label>
+        <div class="cluster" id="pegs"></div>
+      </div>
     </section>
 
     <!-- Everything below depends on what's on the board, and hides itself

@@ -13,7 +13,7 @@
 // ============================================================
 
 import { getScaleDegrees } from "./theory.js";
-import { instrument, numFrets, numStrings, droneStrings, midiAt, buildScaleGrid, capoFret, handAtNut, handFret } from "./fretboard.js";
+import { instrument, numFrets, numStrings, droneStrings, midiAt, buildScaleGrid, capoFret, handAtNut, handFret, cagedShapes } from "./fretboard.js";
 import { pitchAt } from "./paths.js";
 
 // Four frets is what the hand covers without complaint on a guitar-scale
@@ -373,8 +373,9 @@ function cagedGrip(voicing, degrees) {
   // mandolin's fifths or a banjo's open G can, purely by coincidence,
   // produce the same relative fret pattern on the same string numbers —
   // but calling it an "E shape" there would teach a shape that doesn't
-  // exist on that instrument.
-  if (!instrument.caged) return null;
+  // exist on that instrument. Nor does one survive a peg being turned:
+  // the same pattern of frets in drop D is a different chord.
+  if (!cagedShapes()) return null;
   if (degrees.length !== 3) return null;
   const quality = degrees.includes("b3") ? "minor" : degrees.includes("3") ? "major" : null;
   if (!quality) return null;

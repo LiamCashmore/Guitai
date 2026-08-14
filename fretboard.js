@@ -33,6 +33,10 @@ import { noteToPc, getScalePcs, getScaleDegrees, getFretPcs, spellScale, midiToP
 // scales and arpeggios: chords and progressions are grip searches built
 // around a six-string hand, and a four-string bass wants its own voicing
 // rules rather than the guitar's applied to fewer strings.
+//
+// `tunings` is what the pegs have been doing since — see THE TUNING
+// below. An instrument without the key has one tuning, the one written
+// in its openMidi.
 // ------------------------------------------------------------
 
 export const INSTRUMENTS = {
@@ -43,6 +47,24 @@ export const INSTRUMENTS = {
     openMidi: [40, 45, 50, 55, 59, 64],
     numFrets: 17,
     caged: true,
+    tunings: [
+      { id: "standard", name: "Standard", offsets: [0, 0, 0, 0, 0, 0] },
+      // The 6th string alone, down a tone. Everything else on the neck
+      // stays exactly where it was — which is the whole appeal, and the
+      // reason it is the first alternate tuning anyone tries: the shapes
+      // you know still work, and the bottom string has become a D under
+      // them. The three lowest strings are then a root, a fifth and an
+      // octave at the same fret, so a power chord is one finger laid
+      // across them.
+      { id: "dropD", name: "Drop D", offsets: [-2, 0, 0, 0, 0, 0] },
+      // Drop D, and then the top two strings down a tone as well. Nothing
+      // is left of the guitar's major third: the strings spell D A D G A D
+      // — a Dsus4 with the whole thing open — so the tuning has no third
+      // in it and takes its colour from whatever the hand adds. That is
+      // why the modal shapes sit so easily on it, and why an open strum
+      // in it belongs to neither major nor minor.
+      { id: "dadgad", name: "DADGAD", offsets: [-2, 0, 0, 0, -2, -2] },
+    ],
     kinds: ["scale", "arpeggio", "chord", "progression"],
     chords: {
       strategy: "guitar",
@@ -277,6 +299,131 @@ export let droneStrings  = new Map();
 export let displayOrder  = [];
 
 // ------------------------------------------------------------
+// THE TUNING
+//
+// An instrument's openMidi is how it comes out of the case. A tuning is
+// what the pegs have done to it since: one offset per string, in
+// semitones, added to the pitch that string starts on. Standard is all
+// zeros; drop D is a single -2 on the bottom string and nothing else.
+//
+// That is the whole of it, because openMidi is the whole of the
+// instrument. The grid is built from the open pitches, the width of a
+// hand position is read off the intervals between them, and every scale
+// shape, run and grip is a search over that grid — so turning a peg is
+// not something any of them has to be taught. They were already asking
+// the question, and the answer has changed.
+//
+// A tuning belongs to the instrument, unlike a capo, which is a thing
+// you carry: put the guitar down in drop D and pick up the banjo, and
+// the guitar is still in drop D when you come back to it. So each
+// instrument remembers its own.
+// ------------------------------------------------------------
+
+/** How far from its own pitch a string may be turned, either way. */
+export const MAX_DETUNE = 12;
+
+// The tuning in force, low -> high, and what it is called: a preset's id,
+// or "custom" for one tuned by hand to something unnamed.
+export let tuningOffsets = [];
+export let tuningId      = "standard";
+
+// instrument id -> offsets, for the instruments put down mid-song. The
+// offsets alone, because they are the only fact: what a tuning is called
+// follows from where the strings are, and is worked out in rebuild.
+const chosenTunings = new Map();
+
+const noDetune = inst => inst.openMidi.map(() => 0);
+
+/**
+ * The tunings an instrument offers, its own first.
+ *
+ * Every instrument has at least one — the pitches written in its
+ * openMidi — so an instrument that has never been given the key still
+ * answers this, and the menu built from it still has something in it.
+ */
+export function tuningsFor(inst = instrument) {
+  return inst.tunings ?? [{ id: "standard", name: "Standard", offsets: noDetune(inst) }];
+}
+
+/** One offset per string, whatever came in, within reach of the pegs. */
+function clampOffsets(inst, offsets) {
+  return inst.openMidi.map((_, s) =>
+    Math.max(-MAX_DETUNE, Math.min(MAX_DETUNE, Math.round(offsets?.[s] ?? 0))));
+}
+
+/** Which named tuning these offsets are, if they are one. */
+function presetFor(inst, offsets) {
+  return tuningsFor(inst).find(t =>
+    clampOffsets(inst, t.offsets).every((v, s) => v === offsets[s])) ?? null;
+}
+
+/** Is every string where the instrument itself says it should be? */
+export function isStandardTuning() {
+  return tuningOffsets.every(o => o === 0);
+}
+
+/**
+ * Are the CAGED shapes a fact about what is currently under the hands?
+ *
+ * They are the five movable major-chord forms of a six-string guitar in
+ * fourths with a major third between strings 3 and 2 — which is a fact
+ * about the tuning, not about the guitar. Drop the 6th string a tone and
+ * the templates are naming frets that no longer hold what they claim, so
+ * the general position search takes over, which reads the intervals
+ * themselves and is right whatever the pegs have been doing.
+ */
+export function cagedShapes() {
+  return !!instrument.caged && isStandardTuning();
+}
+
+/**
+ * Tune to a named preset.
+ *
+ * @param {string} id    a tuning id from tuningsFor(inst)
+ * @param {object} inst  which instrument — the one in hand by default
+ * @returns {number[]} the offsets now in force
+ */
+export function setTuning(id, inst = instrument) {
+  const preset = tuningsFor(inst).find(t => t.id === id);
+  if (!preset) throw new Error(`unknown tuning: ${id}`);
+  return setTuningOffsets(preset.offsets, inst);
+}
+
+/**
+ * Tune by hand, one offset per string.
+ *
+ * Turning the pegs back to where a named tuning sits IS that tuning —
+ * the strings cannot tell the difference, so neither should the name.
+ * That is why the preset is looked up from the offsets rather than
+ * tracked alongside them: there is only one fact here, and it is the
+ * pitches.
+ *
+ * An instrument other than the one in hand may be tuned too — that is
+ * how the ones put down in another tuning get it back at startup. The
+ * board is only rebuilt for the instrument actually on it.
+ *
+ * @returns {number[]} the offsets now in force, after clamping
+ */
+export function setTuningOffsets(offsets, inst = instrument) {
+  const next = clampOffsets(inst, offsets);
+  chosenTunings.set(inst.id, next);
+  if (inst === instrument) rebuild(instrument);
+  return next;
+}
+
+/**
+ * Turn one peg, leaving the rest alone.
+ *
+ * @param {number} string     string index, low -> high
+ * @param {number} semitones  how far from that string's own pitch
+ */
+export function retuneString(string, semitones) {
+  const next = tuningOffsets.slice();
+  next[string] = semitones;
+  return setTuningOffsets(next);
+}
+
+// ------------------------------------------------------------
 // THE CAPO
 //
 // A bar clamped across the neck, and to the model it does exactly one
@@ -365,9 +512,18 @@ export function barFret(string) {
   return droneStrings.has(string) ? spikeAt(string) : capoFret;
 }
 
-/** Everything clamped to the neck right now, for anything caching by it. */
-export function barsKey() {
-  return `${capoFret}` + [...spikeFrets].map(([s, f]) => `/${s}:${f}`).join("");
+/**
+ * What this neck sounds like right now, for anything caching by it: how
+ * it is tuned, and everything clamped to it.
+ *
+ * One key rather than two because they are one question. A grip found on
+ * a guitar in standard with a capo at the 2nd fret is not an answer about
+ * the same guitar in drop D, and the search has no way of noticing that
+ * on its own — it would hand back the cached shape.
+ */
+export function neckKey() {
+  return `${tuningOffsets.join(",")}/${capoFret}`
+    + [...spikeFrets].map(([s, f]) => `/${s}:${f}`).join("");
 }
 
 /**
@@ -438,7 +594,13 @@ function identityOrder(n) {
  */
 function rebuild(forInstrument) {
   numFrets      = forInstrument.numFrets;
-  openMidi      = forInstrument.openMidi;
+  // What the pegs have done to it, and then the one line that makes a
+  // tuning a tuning: the open pitches, moved. Nothing else in this file
+  // — or downstream of it — reads the offsets at all.
+  const chosen  = chosenTunings.get(forInstrument.id) ?? tuningsFor(forInstrument)[0].offsets;
+  tuningOffsets = clampOffsets(forInstrument, chosen);
+  tuningId      = presetFor(forInstrument, tuningOffsets)?.id ?? "custom";
+  openMidi      = forInstrument.openMidi.map((m, s) => m + tuningOffsets[s]);
   droneStrings  = new Map((forInstrument.droneStrings ?? []).map(d => [d.string, d.nutFret]));
   displayOrder  = forInstrument.displayOrder ?? identityOrder(openMidi.length);
   // A capo carried over from a longer neck may not fit this one, and a
@@ -589,6 +751,10 @@ export function setInstrument(id) {
   // The capo stays where it was put. It is a thing clamped to a neck, not
   // a property of one, and picking up another instrument with the capo
   // still in your hand is what actually happens.
+  //
+  // The tuning does the opposite, for the same reason: it is a property
+  // of the neck and cannot be carried anywhere. rebuild picks up
+  // whatever this instrument was left tuned to.
   rebuild(next);
   return instrument;
 }
