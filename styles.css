@@ -7,12 +7,14 @@
    The neck itself stays ebony in both modes — a fretboard is dark,
    and inverting it would make the one thing you're reading the one
    thing that keeps moving.
+
+   Layout, 2nd pass: one card for what is on the board, one card for
+   the board and everything that acts on it, one strip for practice.
+   Setup folds away; on a phone the choosers fold away too.
    ============================================================ */
 
 :root {
-  /* ---- The six bands, top to bottom. Named for where they sit in
-     the sunset, so a band can be reached for by position, not hue.
-     These are fixed; both themes are built on them. ---- */
+  /* ---- The six bands, top to bottom ---- */
   --band-1: #e14434;   /* red      */
   --band-2: #ee7b30;   /* orange   */
   --band-3: #f2b333;   /* gold     */
@@ -20,20 +22,15 @@
   --band-5: #2e9d8f;   /* teal     */
   --band-6: #1d6a78;   /* deep sea */
 
-  /* Band 6 raised until it reads against ebony. The board is dark, and
-     deep sea on it is nearly the board — so a run needs the sky above
-     that sea rather than the sea itself. Still band 6's hue, so it sits
-     inside the palette rather than beside it. */
   --band-6-lit: #6cc5d8;
 
   /* Band 4 is cream, and in day mode cream is the paper — the stripe
      would show a gap where it fell. So the stripe keeps its own fourth
-     colour and swaps in the reference's olive when the page is pale.
-     Only the stripe uses it; the board goes on using real cream. */
+     colour and swaps in a forest green when the page is pale. The
+     wordmark and the sun mark are cut from the same stripe, so they
+     take the green with it. */
   --stripe-4: var(--band-4);
 
-  /* Hard stops, never blended — the reference prints them as flat
-     bands and a soft gradient would read as a different decade. */
   --sunset: linear-gradient(
     180deg,
     var(--band-1) 0 17%, var(--band-2) 17% 34%, var(--band-3) 34% 55%,
@@ -43,8 +40,7 @@
     var(--band-1) 0 17%, var(--band-2) 17% 34%, var(--band-3) 34% 55%,
     var(--stripe-4) 55% 72%, var(--band-5) 72% 87%, var(--band-6) 87% 100%);
 
-  /* ---- The board. Ebony either way, so these sit outside the
-     themes and are declared once. ---- */
+  /* ---- The board. Ebony either way. ---- */
   --wood: #191920;
   --wood-edge: #000000;
   --wire: #7c7871;
@@ -56,37 +52,25 @@
   --root-ink: #fdf3df;
   --note: #f2b333;
   --note-ink: #17160f;
-  --note-ring: #0b0b0d;      /* the black between the bands */
+  --note-ring: #0b0b0d;
 
-  /* Ink dark enough to sit on any band — labels on filled buttons. */
   --on-band: #17160f;
 
-  /* ---- THE DIALS ------------------------------------------
-     Every colour of the run and its markers, gathered in one place so
-     they can be tried against each other. Each takes a band from above
-     or any hex you like. The stroke widths and dash patterns that go
-     with them are further down, under NOTES ON THE BOARD. */
-  --pos-bar: var(--band-2);        /* the sliding position bar         */
-  --pos-bar-ink: var(--on-band);   /* the fret range printed on it     */
-  /* The run is drawn in the direction it travels: warm going up, cool
-     coming down. One colour for the line and the notes under it, so a
-     stretch of the run reads as one object rather than as a line with
-     unrelated markers on it. */
-  --path-asc: var(--band-2);       /* climbing — orange                */
-  --path-desc: var(--band-6-lit);  /* falling — the lit sea            */
-  /* How far the run recedes while it plays, so that only the note under
-     the ear is at full strength. JS mirrors this — see PLAY_GHOST. */
+  /* ---- THE DIALS ---- */
+  --pos-bar: var(--band-2);
+  --pos-bar-ink: var(--on-band);
+  --path-asc: var(--band-2);
+  --path-desc: var(--band-6-lit);
   --play-ghost: 0.18;
-  --barre: var(--band-2);          /* the finger lying across a fret    */
-  --ring-end: var(--band-5);       /* the notes you chose              */
-  --ring-turn: var(--band-5);      /* one you chose, mid-run           */
-  --ring-pinned: var(--band-4);    /* slid into place, dotted ring     */
-  --ring-locked: var(--band-4);    /* held firmly, dashed ring         */
-  --ring-sounding: var(--band-4);  /* the note you're hearing, mid-run */
+  --barre: var(--band-2);
+  --ring-end: var(--band-5);
+  --ring-turn: var(--band-5);
+  --ring-pinned: var(--band-4);
+  --ring-locked: var(--band-4);
+  --ring-sounding: var(--band-4);
 
   --r: 3px;                  /* barely rounded: this era used a ruler */
 
-  /* Motion (JS mirrors these durations — see FADE_MS / SLIDE_MS) */
   --slide: 360ms cubic-bezier(0.45, 0.03, 0.25, 1);
   --fade: 240ms ease;
 }
@@ -101,17 +85,14 @@
   --line-hover: #45454f;
   --text: #f3e6c8;
   --muted: #94897a;
-  --accent-text: var(--band-3);      /* gold reads on black */
+  --accent-text: var(--band-3);
   --readout-strong: var(--band-4);
   --focus: var(--band-3);
-  --lift: var(--band-6);             /* the offset block behind a toggle */
+  --lift: var(--band-6);
   --grain: 0.16;
 }
 
 /* ---- Day: the same print, on newsprint --------------------- */
-/* The cream band becomes the paper, and the accents deepen — gold on
-   cream is unreadable, so the label colour drops to a burnt red that
-   holds the same place in the palette. */
 [data-theme="day"] {
   --bg: #efe3c9;
   --surface: #fbf4e2;
@@ -126,7 +107,7 @@
   --focus: var(--band-6);
   --lift: var(--band-1);
   --grain: 0.09;
-  --stripe-4: #a8a85a;               /* olive, where cream would vanish */
+  --stripe-4: #4f9464;               /* forest green, where cream would vanish */
 }
 
 * { box-sizing: border-box; }
@@ -138,14 +119,12 @@ body {
   background: var(--bg);
   color: var(--text);
   margin: 0;
-  padding: 30px 24px 44px;
+  padding: 26px 22px 40px;
   -webkit-tap-highlight-color: transparent;
   transition: background 220ms ease, color 220ms ease;
 }
 
-/* The print grain from the reference: one still layer of noise over
-   everything, too faint to read as texture up close and just enough
-   to stop the flat colour looking screen-printed by a machine. */
+/* The print grain from the reference. */
 body::after {
   content: "";
   position: fixed;
@@ -157,12 +136,25 @@ body::after {
 }
 
 .app {
-  max-width: 1200px;
+  max-width: 1240px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+[hidden] { display: none !important; }
 
 /* ---- Masthead ---------------------------------------------- */
 .masthead {
@@ -199,11 +191,12 @@ body::after {
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
-/* The far end of the masthead: what you're playing, and what time of
-   day it is. Grouped so one auto margin pushes both across, instead of
-   two fighting over the same slack. */
 .masthead-tools {
   margin-left: auto;
   display: flex;
@@ -212,50 +205,33 @@ body::after {
   flex: none;
 }
 
-/* The instrument picker changes what the board IS, not what is drawn on
-   it, so it sits up here with the chrome rather than down among the
-   controls that choose material. */
 .select-compact { width: auto; }
 .select-compact select {
   width: auto;
-  min-width: 108px;
+  min-width: 112px;
   padding: 9px 32px 9px 12px;
   font-size: 13px;
   letter-spacing: 0.04em;
 }
 
-/* ---- Sun / moon switch ------------------------------------- */
-/* Sits out at the far right, away from the controls that change the
-   board — it changes the room, not the music. */
+.btn-icon-text,
 .theme-toggle {
-  margin-left: auto;
-  align-self: center;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex: none;
-}
-
-.theme-toggle svg { display: block; }
-.theme-toggle .glyph-day { display: none; }
-[data-theme="night"] .theme-toggle .glyph-day { display: block; }
-[data-theme="night"] .theme-toggle .glyph-night { display: none; }
-
-/* The theme toggle sits opposite the wordmark: the same sun, drawn as
-   a half-disc, filling and emptying as the page turns over. */
-.theme-toggle {
-  margin-left: 0;
-  align-self: center;
   display: inline-flex;
   align-items: center;
   gap: 9px;
-  padding: 9px 14px 9px 11px;
+  flex: none;
+  white-space: nowrap;
 }
-
+.btn-icon-text svg,
 .theme-toggle svg { display: block; flex: none; }
 
+/* The fold is a phone idea: on a wide screen there is room for the
+   choosers and no reason to hide them. */
+.btn-fold { display: none; }
+.btn-fold svg { transition: transform 180ms ease; }
+.btn-fold.folded svg { transform: rotate(-90deg); }
+
 /* ---- Panels ------------------------------------------------ */
-/* Two bands: what you're looking at, then what you can do to it. */
 .panel {
   position: relative;
   display: flex;
@@ -268,9 +244,8 @@ body::after {
   border-radius: var(--r);
 }
 
-/* The stripe rides the top edge of the primary panel only — said once,
-   loudly, instead of everywhere quietly. */
-.panel::before {
+/* The stripe rides the top edge of the primary panel only. */
+.panel-what::before {
   content: "";
   position: absolute;
   inset: 0 0 auto 0;
@@ -285,10 +260,33 @@ body::after {
   min-height: 60px;
 }
 
-.panel-quiet::before { display: none; }
+.panel-what {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 13px;
+}
+
+.what-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.what-root { align-items: center; }
+
+.row-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+  flex: none;
+}
 
 .field { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
 .field.wide { flex: 1 1 220px; }
+.field-material { flex: 1 1 260px; }
 
 .field > label {
   font-size: 10px;
@@ -298,9 +296,44 @@ body::after {
   color: var(--accent-text);
 }
 
-/* Controls that belong together and travel together. */
 .cluster { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .stepper { display: none; align-items: center; gap: 6px; }
+
+/* ---- Chips ------------------------------------------------- */
+/* The same flat chip as every other button here — a row of them is a
+   choice made in one press instead of two. */
+.chips { display: flex; gap: 7px; flex-wrap: wrap; }
+
+.chips-root {
+  display: grid;
+  grid-template-columns: repeat(17, minmax(0, 1fr));
+  gap: 4px;
+  flex: 1 1 auto;
+  max-width: 760px;
+}
+
+.chip-root {
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 4px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+/* A chosen root is the root's own colour — the same red it wears on
+   the board, so the two say the same thing. */
+.chip-root.active {
+  background: var(--root);
+  border-color: var(--root);
+  color: var(--root-ink);
+  box-shadow: none;
+}
+.chip-root.active:hover:not(:disabled) {
+  background: var(--root);
+  border-color: var(--root);
+  color: var(--root-ink);
+}
 
 /* ---- Selects ----------------------------------------------- */
 .select { position: relative; display: flex; }
@@ -339,10 +372,6 @@ select:hover { border-color: var(--line-hover); }
 option { background: var(--chip); color: var(--text); }
 
 /* ---- Typing a progression ---------------------------------- */
-/* Sits in the row of menus and has to look like one of them — same
-   chip, same border, same height. What is typed into it is chord
-   symbols, so it is set in the same tabular face the readouts use:
-   Am7 and D7 line up under each other instead of drifting. */
 #progEdit { display: none; }
 #progEdit.on { display: flex; }
 
@@ -362,8 +391,6 @@ option { background: var(--chip); color: var(--text); }
 #progInput:hover { border-color: var(--line-hover); }
 #progInput::placeholder { color: var(--muted); opacity: 0.7; }
 
-/* What the line was understood to say, spelled out in the current key —
-   which is the whole answer to "did it read what I meant". */
 #progReadout { color: var(--readout-strong); }
 #progReadout.unread { color: var(--band-1); }
 
@@ -428,8 +455,7 @@ button:disabled { opacity: 0.32; cursor: not-allowed; }
   color: var(--on-band);
 }
 
-/* The two buttons that make sound wear the transport symbol, so the one
-   thing you can do without reading is start it. */
+/* The two buttons that make sound wear the transport symbol. */
 .btn-accent {
   display: inline-flex;
   align-items: center;
@@ -466,8 +492,7 @@ input[type="range"] {
   cursor: pointer;
 }
 
-/* The track is the sunset laid on its side, so dragging the tempo or
-   the strum runs the hand along the same six bands as the wordmark. */
+/* The track is the sunset laid on its side. */
 input[type="range"]::-webkit-slider-runnable-track {
   height: 6px;
   background: var(--sunset-x);
@@ -494,15 +519,9 @@ input[type="range"]::-moz-range-thumb {
   border: 1.5px solid var(--bg);
 }
 
-/* The tempo is the one thing here worth dragging slowly, and it now
-   covers 30 to 400 — so it gets the room to be set to a number rather
-   than to a region. */
 .slider-wide input[type="range"] { width: 210px; }
 
 /* ---- Readouts ---------------------------------------------- */
-/* Everything the app reports back — fret ranges, note counts, tempo —
-   is set in one tabular face, so numbers line up and don't jitter as
-   they change. */
 .readout {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   font-size: 11px;
@@ -512,34 +531,43 @@ input[type="range"]::-moz-range-thumb {
   white-space: nowrap;
 }
 
-#posLabel { min-width: 200px; text-align: center; color: var(--readout-strong); }
+#posLabel { min-width: 186px; text-align: center; color: var(--readout-strong); }
 #bpmLabel { min-width: 30px; }
 #spreadLabel { min-width: 44px; }
-
-/* The count. Wide enough for "count 4" so the bar number doesn't shuffle
-   sideways as the beat changes under it. */
 #beatReadout { min-width: 74px; color: var(--readout-strong); }
-/* Counting in reads as the thing it is: not the music yet. */
 #beatReadout.counting { color: var(--band-1); }
-
-/* A hand-built grip that no hand can hold. Said plainly rather than
-   forbidden — the notes are yours to choose. */
 #posLabel.unplayable { color: var(--band-1); }
 
 /* ---- The pegs ---------------------------------------------- */
-/* One machine head per string, and they read left to right the way a
-   player says a tuning out loud: low string first. Folded away unless
-   asked for, since a named tuning needs none of this. */
 #tuningEdit { display: none; }
 #tuningEdit.on { display: flex; }
 
-.peg { display: inline-flex; align-items: center; gap: 1px; }
+.peg {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px 4px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r);
+  background: var(--chip);
+}
 
-/* Small enough that six of them are a row rather than a second panel. */
+/* Which string this is, counted the way a player counts them. */
+.peg-num {
+  min-width: 14px;
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10px;
+  color: var(--muted);
+}
+
 .peg .btn-icon {
-  min-width: 22px;
+  min-width: 24px;
+  min-height: 30px;
   padding: 3px 5px;
   font-size: 15px;
+  border-color: transparent;
+  background: transparent;
 }
 
 .peg-note {
@@ -551,17 +579,49 @@ input[type="range"]::-moz-range-thumb {
   color: var(--muted);
 }
 
-/* A string that has been moved off its own pitch says so — which is the
-   whole of what a custom tuning is. */
 .peg.detuned .peg-note { color: var(--readout-strong); font-weight: 700; }
 
-/* ---- The board --------------------------------------------- */
+/* ---- The board and everything that acts on it -------------- */
+/* One card: the tools that change what the board shows sit on the
+   board, because that is what they act on. */
+.panel-board {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.board-tools,
+.board-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 11px 12px;
+  background: var(--surface-quiet);
+}
+.board-tools { border-bottom: 1px solid var(--line); }
+.board-foot { border-top: 1px solid var(--line); gap: 16px; }
+
+/* Labels sits at the far end: it changes what the markers say, not
+   what is on the board. */
+.btn-labels { margin-left: auto; }
+
+.board-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .board-wrap {
   overflow-x: auto;
-  padding: 6px;
+  padding: 8px;
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r);
   overscroll-behavior-x: contain;
 }
 
@@ -570,7 +630,7 @@ input[type="range"]::-moz-range-thumb {
 /* ---- Legend ------------------------------------------------ */
 .legend {
   display: flex;
-  gap: 20px;
+  gap: 16px;
   align-items: center;
   flex-wrap: wrap;
   font-size: 10.5px;
@@ -578,8 +638,10 @@ input[type="range"]::-moz-range-thumb {
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--muted);
-  padding: 0 2px;
+  white-space: nowrap;
 }
+
+.legend > span { display: inline-flex; align-items: center; }
 
 .swatch {
   display: inline-block;
@@ -587,121 +649,115 @@ input[type="range"]::-moz-range-thumb {
   height: 11px;
   margin-right: 8px;
   vertical-align: middle;
+  flex: none;
 }
 
-/* The run's two directions, kept together so they read as one pair —
-   the whole point of them is the contrast. */
-.legend-run { display: flex; gap: 20px; align-items: center; }
+.legend-run { display: flex; gap: 16px; align-items: center; }
 
-.legend-tip { margin-left: auto; letter-spacing: 0.08em; }
+.legend-tip {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* ---- Practice ---------------------------------------------- */
+.panel-practice { padding: 10px 16px; }
+.practice-more-btn { margin-left: auto; white-space: nowrap; }
+
+.practice-extra {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+}
+
+/* ---- The folded summary (phone) ---------------------------- */
+.fold-summary {
+  display: none;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 12px;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.fold-summary[hidden] { display: none !important; }
+.fold-root { color: var(--accent-text); font-weight: 700; flex: none; }
+.fold-scale {
+  flex: 1 1 auto;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fold-tap { flex: none; }
 
 /* ============================================================
-   NOTES ON THE BOARD
+   NOTES ON THE BOARD  (unchanged — the board is view.js's)
    ============================================================ */
 
-/* Picking a run is the resting state for scales and arpeggios, so
-   every note is a target. */
 #board.picking .note { cursor: pointer; }
 #board.picking { user-select: none; -webkit-user-select: none; }
 
-/* With ghosts showing, every note on the board is a switch: the ones
-   sounding can be silenced, the faint ones put in their place. */
 #board.editing .note { cursor: pointer; }
 #board.editing .note.is-muted:hover { opacity: 0.55 !important; }
 #board.editing { user-select: none; -webkit-user-select: none; }
 
-/* The finger laid across a fret. Held back enough that the frets and
-   strings it crosses still show through, since it spans most of the neck
-   on a full barre and at full strength it blots out the board underneath.
-   It is drawn in the layer below the markers, so the notes it joins sit
-   on top of it exactly as fingertips sit on top of a finger. */
 .barre { fill: var(--barre); opacity: 0.4; }
 
-/* Notes not taking part in the run recede but stay visible. */
 .note.is-muted { opacity: 0.22 !important; }
 
-/* The notes you picked get a ring so they read as chosen, not just
-   coloured. The teal band is used nowhere else on the board, so the notes
-   that define the run are the ones that can't be mistaken for anything. */
 .note.is-start .note-circle,
 .note.is-target .note-circle {
   stroke: var(--ring-end);
   stroke-width: 3.5;
 }
 
-/* A note picked mid-phrase: where one leg lands and the next sets off
-   from. Teal, because you chose it like the other two — but broken into
-   long dashes, because it is a joint rather than an end. */
 .note.is-turn .note-circle {
   stroke: var(--ring-turn);
   stroke-width: 3.5;
   stroke-dasharray: 9 3;
 }
 
-/* Everything the run passes through is ringed in the colour of the line
-   that reaches it, so the way the hand is going is legible from the notes
-   alone — warm climbing, cool falling. */
 .note.is-path.is-asc  .note-circle { stroke: var(--path-asc);  stroke-width: 2.5; }
 .note.is-path.is-desc .note-circle { stroke: var(--path-desc); stroke-width: 2.5; }
 
-/* The line itself, one stretch per direction of travel. Its colour lives
-   here beside the rings; how visible it is lives in view.js as
-   LINE_OPACITY, because the line fades away entirely when there is no
-   run — that part is state, not styling. */
 #pathRun .path-seg.is-asc  { stroke: var(--path-asc); }
 #pathRun .path-seg.is-desc { stroke: var(--path-desc); }
 
-/* ---- While the run plays ----------------------------------- */
-/* The board stops answering. What is on it while a run plays is a
-   performance of the run, not the run itself — the markers are dimmed,
-   moving, and in the case of the ones off the run not there at all, so
-   nothing you could aim at is where it looks like it is. Stop the run and
-   the board is a board again. */
 #board.playing { pointer-events: none; }
-
-/* The run recedes to a ghost of itself, so the only thing at full
-   strength on the board is what is under the ear right now. */
 #board.playing #pathRun .path-seg { opacity: var(--play-ghost); }
-
-/* Notes the run never touches leave the board entirely. Held back they
-   are still shapes on a neck, and at this point they are answering a
-   question nobody is asking — what is being played is the run, and every
-   other marker is something to read past. Away, the phrase is the only
-   thing there, and it comes back the moment the run stops. */
 #board.playing .note.is-muted { opacity: 0 !important; }
 
-/* The lit pieces: the same line at full strength, one per step, drawn in
-   as the run crosses each and fading once the far note is reached. Their
-   opacity is set from the audio clock frame by frame, so nothing here may
-   transition it — a transition would lag the sound. */
 #pathSpark .path-spark { transition: none; }
 #pathSpark .path-spark.is-asc  { stroke: var(--path-asc); }
 #pathSpark .path-spark.is-desc { stroke: var(--path-desc); }
 
-/* The markers of the run dim and light on the same clock, written straight
-   onto each one, so their opacity must not be eased — a transition would
-   lag the sound and smear the decay. The notes leaving the board are not
-   on that clock, so they keep the ordinary fade and go quietly rather
-   than blinking out. */
 #board.playing .note:not(.is-muted) { transition: transform var(--slide); }
 
-/* A pinned note — slid into place, but it gives way when an end moves.
-   Thin dotted ring: held, lightly. */
 .note.is-pinned .note-circle {
   stroke: var(--ring-pinned);
   stroke-width: 2;
   stroke-dasharray: 1 3;
 }
 
-/* A locked note: bold dashed ring, so it reads as held firmly rather than
-   merely passed through. Click it to let go. */
 .note.is-locked .note-circle {
   stroke: var(--ring-locked);
   stroke-width: 3;
   stroke-dasharray: 4 3;
 }
 
-/* Every note of a run can be slid; clicking locks it in place. */
 #board.picking .note.is-anchor,
 #board.picking .note.is-locked,
 #board.picking .note.is-pinned,
@@ -711,11 +767,6 @@ input[type="range"]::-moz-range-thumb {
 #board.picking .note.is-pinned:active,
 #board.picking .note.is-path:active { cursor: grabbing; }
 
-/* ---- The note currently sounding --------------------------- */
-/* It swells rather than changes colour: the run already uses colour to
-   say what a note is, and this has to say something different — that
-   this is the one you are hearing, right now. The growth is quick and
-   the settle is slow, which is the shape of a plucked note. */
 .note.is-sounding .note-circle {
   transform: scale(1.34);
   stroke: var(--ring-sounding);
@@ -728,11 +779,6 @@ input[type="range"]::-moz-range-thumb {
 }
 .note.is-sounding .note-circle { transition: transform 60ms ease-out; }
 
-/* ---- The note just picked ---------------------------------- */
-/* It swells and settles, the way a plucked string does — a moment's
-   confirmation that the click landed on this note and not its neighbour.
-   The new leg of the run grows out of it at the same time, so the two
-   together say where the run has just been carried on from. */
 @keyframes pick-pop {
   0%   { transform: scale(1); }
   38%  { transform: scale(1.44); }
@@ -742,31 +788,18 @@ input[type="range"]::-moz-range-thumb {
   animation: pick-pop 460ms cubic-bezier(0.22, 0.9, 0.3, 1);
 }
 
-/* ---- Position cycling animation ---------------------------- */
-/* Ease in and out: notes gather speed leaving a fret and settle
-   gently into the next one. */
 .note { transition: transform var(--slide), opacity var(--fade); }
-
-/* Colours cross-fade so a note becoming the root doesn't flash. */
 .note-circle { transition: fill var(--slide); }
 
 #posHighlight {
   transition: x var(--slide), width var(--slide), opacity var(--fade);
 }
 
-/* The run's line is a list of points, so JS steps it along the same curve
-   the notes use. Only its appearing, disappearing and changing colour are
-   left to CSS: a run showing up somewhere new should fade in there, not
-   skate across the neck from wherever the last one happened to end — and
-   a stretch that turns from climbing to falling should change colour over
-   the same beat as the notes it joins slide to their new frets. */
 #pathLayer polyline { transition: opacity var(--fade); }
 #pathRun .path-seg { transition: opacity var(--fade), stroke var(--slide); }
 
 /* ---- Window handle ----------------------------------------- */
-/* A bar above the neck, dragged along it to pick a stretch. It slides by
-   transform and stretches by width, both eased, so moving between
-   positions of different widths reads as one motion. */
+/* A bar above the neck, dragged along it to pick a stretch. */
 .win-handle {
   cursor: grab;
   transition: transform 200ms cubic-bezier(0.45, 0.03, 0.25, 1);
@@ -779,13 +812,6 @@ input[type="range"]::-moz-range-thumb {
 .win-handle:hover .bar { opacity: 1; }
 
 /* ---- The capo ---------------------------------------------- */
-/* Painted in all six bands — the sunset stood on end, the same cut as the
-   mark in the masthead. Nothing else on the board carries the whole
-   palette, so the one object you can pick up and move is unmistakable.
-
-   No transition: a capo is clamped behind a particular fret, and there is
-   nowhere between two of them for it to be, so it snaps from one to the
-   next as it's dragged. */
 .capo {
   cursor: grab;
   touch-action: none;
@@ -803,12 +829,6 @@ input[type="range"]::-moz-range-thumb {
 }
 .capo:hover .capo-bar { stroke: var(--band-4); }
 
-/* The spike: the same bar cut down to one string, so it needs no colours
-   of its own — it is the same object doing the same job.
-
-   Its pin-head sits out past the end of the short 5th string's neck,
-   where the page shows through rather than the fretboard, so it takes the
-   page's own chrome colours and not the board's. */
 .spike-btn { cursor: pointer; }
 .spike-btn circle {
   fill: var(--chip);
@@ -826,8 +846,6 @@ input[type="range"]::-moz-range-thumb {
 .spike-btn.on circle { fill: var(--band-3); stroke: var(--band-2); }
 .spike-btn.on .pin { stroke: var(--on-band); }
 
-/* The frets behind the bar, darkened out. The neck is still there — it
-   just has nothing left to say. */
 .capo-shade {
   fill: var(--wood-edge);
   opacity: 0.55;
@@ -835,48 +853,59 @@ input[type="range"]::-moz-range-thumb {
 }
 
 /* ---- Narrow screens ---------------------------------------- */
-/* The controls fold into a grid; the neck keeps its size and scrolls,
-   because a fretboard squeezed to phone width stops being readable. */
+/* The choosers fold; the neck keeps its size and scrolls, because a
+   fretboard squeezed to phone width stops being readable. */
 @media (max-width: 720px) {
-  body { padding: 20px 14px 34px; }
-  .app { gap: 13px; }
+  body { padding: 16px 12px 30px; }
+  .app { gap: 11px; }
 
-  .masthead { gap: 11px; }
-  .masthead h1 { font-size: 27px; }
+  .masthead { gap: 10px; padding-bottom: 11px; }
+  .masthead h1 { font-size: 24px; }
   .masthead p { display: none; }
 
-  /* The switch keeps its glyph and drops its word — at this size the
-     sun and the moon are doing the explaining anyway. */
+  .masthead-tools { gap: 7px; margin-left: auto; }
   .theme-toggle { gap: 0; padding: 9px 11px; }
   .theme-toggle .label { display: none; }
-
-  /* The instrument name is short enough to stand on its own here. */
-  .masthead-tools { gap: 7px; }
+  .btn-icon-text span { display: none; }
+  .btn-icon-text { padding: 9px 12px; }
   .select-compact select { min-width: 0; padding: 9px 28px 9px 10px; }
 
+  /* The fold is what makes room for the neck. */
+  .btn-fold { display: inline-flex; align-items: center; justify-content: center; }
+  .fold-summary { display: flex; }
+
   .panel { gap: 10px; padding: 14px 12px 12px; }
+  .panel-what { gap: 10px; }
+  .what-row { gap: 8px; }
   .field { flex: 1 1 calc(50% - 5px); }
   .field.wide { flex: 1 1 100%; }
 
-  .panel-quiet { gap: 10px 12px; }
-  .cluster { flex: 0 1 auto; }
+  /* Twelve semitones and their second spellings won't sit in one row on
+     a phone, so the roots wrap into a keyboard-shaped block instead. */
+  .chips-root { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .chip-root { min-height: 44px; }
+  .chips .btn { flex: 1 1 calc(50% - 4px); }
+
+  .board-tools, .board-foot { gap: 8px 10px; padding: 10px; }
+  .btn-labels { margin-left: 0; }
+  .board-actions { margin-left: 0; flex: 1 1 100%; }
+  .legend { gap: 10px 14px; font-size: 10px; }
+  .legend-tip { display: none; }
 
   #posLabel { min-width: 0; flex: 1 1 auto; }
   #pathLabel { flex: 1 1 100%; }
+  #cagedNav { flex: 1 1 auto; }
 
-  input[type="range"] { width: 80px; }
+  .panel-practice { padding: 10px 12px; }
+  .practice-more-btn { margin-left: 0; }
+  .slider-wide input[type="range"] { width: 100%; min-width: 120px; }
+  .slider-wide { flex: 1 1 160px; }
 
   /* Fingers, not pointers. */
   button, select { min-height: 44px; }
   .btn-icon { min-width: 44px; }
-
-  /* Except the pegs, where six strings' worth of arrows have to fit
-     across a phone. They keep the tall target and give up the width,
-     and the row wraps rather than scrolls. */
-  .peg .btn-icon { min-width: 30px; padding: 3px; }
+  .peg .btn-icon { min-width: 30px; min-height: 38px; padding: 3px; }
   #pegs { gap: 6px; }
-
-  .legend-tip { display: none; }
 }
 
 /* ---- Reduced motion ---------------------------------------- */
@@ -887,4 +916,5 @@ input[type="range"]::-moz-range-thumb {
   .note.is-picked .note-circle { animation: none; }
   #pathRun .path-seg { transition: opacity var(--fade); }
   .win-handle, .win-handle .bar { transition: none; }
+  .btn-fold svg { transition: none; }
 }

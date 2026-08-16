@@ -10,165 +10,194 @@
 <body>
   <div class="app">
 
+    <!-- ============ MASTHEAD ============================== -->
     <header class="masthead">
-      <!-- The sun the whole palette comes from: six flat bands, clipped
-           to a circle, sitting where a logo would. -->
       <svg class="sunmark" width="46" height="46" viewBox="0 0 46 46" aria-hidden="true">
         <defs><clipPath id="sunClip"><circle cx="23" cy="23" r="22" /></clipPath></defs>
         <g clip-path="url(#sunClip)">
           <rect x="0" y="0"  width="46" height="8" fill="var(--band-1)" />
           <rect x="0" y="8"  width="46" height="8" fill="var(--band-2)" />
           <rect x="0" y="16" width="46" height="9" fill="var(--band-3)" />
-          <rect x="0" y="25" width="46" height="8" fill="var(--band-4)" />
+          <!-- The fourth band follows the stripe, so day mode gets the
+               forest green rather than cream on cream. -->
+          <rect x="0" y="25" width="46" height="8" fill="var(--stripe-4)" />
           <rect x="0" y="33" width="46" height="7" fill="var(--band-5)" />
           <rect x="0" y="40" width="46" height="6" fill="var(--band-6)" />
         </g>
       </svg>
-      <!-- Filled in from INSTRUMENTS at startup, so the header says what
-           is actually under the hands. -->
       <h1>Guitar</h1>
       <p>Scales · Arpeggios · Chords</p>
 
       <div class="masthead-tools">
-        <!-- Which instrument the whole board is computed for. Everything
-             downstream — the grid, the shapes, the runs — is derived
-             from its open strings, so this is the only place it is said. -->
         <div class="select select-compact">
           <select id="instrument" aria-label="Instrument"></select>
         </div>
 
+        <!-- Tuning and the pegs live behind this now: they set the
+             instrument up, they aren't a way of looking at it. -->
+        <button id="setupBtn" class="btn btn-icon-text" type="button"
+                aria-expanded="false" title="Tuning and strings">
+          <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="8" cy="8" r="2.6" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.6"
+                    stroke-dasharray="2.2 3.4" />
+          </svg>
+          <span>Setup</span>
+        </button>
+
         <button id="themeBtn" class="btn theme-toggle" type="button">
           <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-            <!-- Sun above the horizon by day, below it by night. The
-                 half that's filled is the half of the day you're in. -->
-            <circle cx="8" cy="8" r="7" fill="none"
-                    stroke="currentColor" stroke-width="1.6" />
+            <circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.6" />
             <path id="themeSunFill" d="M1 8 A7 7 0 0 1 15 8 Z" fill="currentColor" />
           </svg>
-          <span id="themeLabel">Day</span>
+          <span id="themeLabel" class="label">Day</span>
+        </button>
+
+        <!-- Phone only: folds the choosers away so the neck gets the screen. -->
+        <button id="foldBtn" class="btn btn-icon btn-fold" type="button"
+                aria-expanded="true" aria-label="Show or hide the choosers">
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M3 6 L8 11 L13 6" fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
         </button>
       </div>
     </header>
 
-    <!-- What you're looking at. Always relevant, so it always shows. -->
-    <section class="panel" aria-label="Choose what to show">
+    <!-- ============ SETUP (folded away) =================== -->
+    <section class="panel panel-quiet panel-setup" id="setupPanel" aria-label="Setup" hidden>
       <div class="field">
-        <label for="root">Root</label>
-        <div class="select"><select id="root"></select></div>
-      </div>
-      <div class="field">
-        <label for="kind">Type</label>
-        <div class="select">
-          <select id="kind">
-            <option value="scale">Scales</option>
-            <option value="arpeggio">Arpeggios</option>
-            <option value="chord">Chords</option>
-            <option value="progression">Progressions</option>
-          </select>
+        <label for="tuning">Tuning</label>
+        <div class="cluster">
+          <div class="select select-compact"><select id="tuning"></select></div>
+          <button id="pegsBtn" class="btn" type="button" title="Tune string by string">Pegs</button>
         </div>
       </div>
-      <div class="field wide">
-        <label for="scale" id="scaleLabel">Scale</label>
-        <div class="select"><select id="scale"></select></div>
+
+      <!-- One peg per string, numbered the way a player counts them:
+           6 is the low one, 1 is the high one. -->
+      <div class="field wide" id="tuningEdit">
+        <label>Strings — 6 low to 1 high</label>
+        <div class="cluster" id="pegs"></div>
+      </div>
+    </section>
+
+    <!-- ============ WHAT IS ON THE BOARD ================= -->
+    <section class="panel panel-what" id="whatPanel" aria-label="Choose what to show">
+      <div class="what-row">
+        <!-- Built by ui.js from the menu below, which stays as the one
+             place the choice actually lives. -->
+        <div class="chips" id="kindChips" role="group" aria-label="Type"></div>
+        <div class="field wide field-material">
+          <label for="scale" id="scaleLabel">Scale</label>
+          <div class="select"><select id="scale"></select></div>
+        </div>
       </div>
 
-      <!-- A progression the player writes themselves. Chords as they are
-           written on a chart, or degrees as the presets are written —
-           both, in the same line, since the only difference is whether a
-           chord names its own root or takes it from the key. Shown only
-           when the menu above is on Custom. -->
+      <div class="what-row what-root">
+        <span class="row-label">Root</span>
+        <div class="chips chips-root" id="rootChips" role="group" aria-label="Root"></div>
+      </div>
+
       <div class="field wide" id="progEdit">
         <label for="progInput">Chords</label>
         <input id="progInput" type="text" autocomplete="off" autocapitalize="off"
                spellcheck="false" placeholder="Am7 | D7 | Gmaj7   —   or   vi IV I V" />
         <span id="progReadout" class="readout"></span>
       </div>
-      <div class="field">
-        <label for="labelsBtn">Labels</label>
-        <button id="labelsBtn" class="btn" type="button">Note names</button>
-      </div>
-      <!-- The capo goes on at the 1st fret and is dragged along the neck
-           from there. What it does to the board is not a display option:
-           the notes under the bar become the open strings. -->
-      <div class="field">
-        <label for="capoBtn">Capo</label>
-        <button id="capoBtn" class="btn" type="button">Off</button>
-      </div>
 
-      <!-- How the instrument itself is tuned. Like the capo, and unlike
-           everything else in this panel, it isn't a way of looking at the
-           board — it changes what the strings sound, and the board is
-           derived from that. The named tunings are here; the pegs beside
-           them are for one that isn't named. -->
-      <div class="field">
-        <label for="tuning">Tuning</label>
-        <div class="cluster">
-          <div class="select select-compact"><select id="tuning"></select></div>
-          <button id="pegsBtn" class="btn" type="button"
-                  title="Tune string by string">Pegs</button>
-        </div>
-      </div>
-
-      <!-- One peg per string, low on the left — the order a player says a
-           tuning out loud in. Filled in from the instrument, since how
-           many there are is its business. -->
-      <div class="field wide" id="tuningEdit">
-        <label>Strings</label>
-        <div class="cluster" id="pegs"></div>
-      </div>
+      <!-- The real controls. Kept in the DOM, and in view.js's hands;
+           the chips above are just a nicer way to reach them. -->
+      <select id="kind" class="visually-hidden" aria-hidden="true" tabindex="-1">
+        <option value="scale">Scales</option>
+        <option value="arpeggio">Arpeggios</option>
+        <option value="chord">Chords</option>
+        <option value="progression">Progressions</option>
+      </select>
+      <select id="root" class="visually-hidden" aria-hidden="true" tabindex="-1"></select>
     </section>
 
-    <!-- Everything below depends on what's on the board, and hides itself
-         when it has nothing to act on. -->
-    <section class="panel panel-quiet" aria-label="Shape and playback">
-      <div class="cluster">
-        <button id="cagedBtn" class="btn" type="button">CAGED</button>
+    <!-- Phone only: what is on the board, when the choosers are folded. -->
+    <button class="fold-summary" id="foldSummary" type="button" hidden></button>
+
+    <!-- ============ THE BOARD ============================ -->
+    <section class="panel panel-board" aria-label="Fretboard">
+      <div class="board-tools">
+        <button id="cagedBtn" class="btn" type="button">Positions</button>
         <div id="cagedNav" class="stepper">
-          <button id="prevPos" class="btn btn-icon" type="button" title="Previous shape (←)" aria-label="Previous shape">‹</button>
+          <button id="prevPos" class="btn btn-icon" type="button"
+                  title="Previous position (←)" aria-label="Previous position">‹</button>
           <span id="posLabel" class="readout"></span>
-          <button id="nextPos" class="btn btn-icon" type="button" title="Next shape (→)" aria-label="Next shape">›</button>
+          <button id="nextPos" class="btn btn-icon" type="button"
+                  title="Next position (→)" aria-label="Next position">›</button>
         </div>
+
+        <!-- On at the 1st fret, then dragged along the neck. -->
+        <button id="capoBtn" class="btn" type="button" title="Clamp a capo on, then drag it">Off</button>
+
+        <div class="cluster" id="ghostField">
+          <button id="ghostBtn" class="btn" type="button">Ghost tones</button>
+        </div>
+        <div class="cluster" id="openField">
+          <button id="openBtn" class="btn" type="button">Open strings</button>
+        </div>
+
+        <!-- One button, three states: names, degrees, nothing. -->
+        <button id="labelsBtn" class="btn btn-labels" type="button">Note names</button>
       </div>
 
-      <div class="cluster" id="ghostField">
-        <button id="ghostBtn" class="btn" type="button">Ghost tones</button>
+      <div class="board-wrap">
+        <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
       </div>
 
-      <div class="cluster" id="openField">
-        <button id="openBtn" class="btn" type="button">Open strings</button>
-      </div>
+      <div class="board-foot">
+        <div class="legend">
+          <span><span class="swatch" style="background:var(--root)"></span>Root</span>
+          <span><span class="swatch" style="background:var(--note)"></span><span id="legendTone">Scale tone</span></span>
+          <span id="runLegend" class="legend-run">
+            <span><span class="swatch" style="background:var(--path-asc)"></span>Climbing</span>
+            <span><span class="swatch" style="background:var(--path-desc)"></span>Falling</span>
+          </span>
+        </div>
 
-      <div class="cluster" id="strumField">
-        <button id="strumBtn" class="btn btn-accent" type="button">Strum</button>
-        <span class="slider">
-          <input id="spread" type="range" min="0" max="100" step="5" value="60"
-                 aria-label="Strum speed"
-                 title="Strum speed — right is one sound, left is note by note" />
-          <span id="spreadLabel" class="readout"></span>
-        </span>
-      </div>
+        <div class="board-actions">
+          <span class="legend-tip" id="legendTip"></span>
 
-      <div class="cluster" id="pathNav">
-        <span id="pathLabel" class="readout readout-hint"></span>
-        <div id="runControls" class="cluster">
-          <button id="playBtn" class="btn btn-accent" type="button">Play</button>
-          <button id="clearPath" class="btn btn-quiet" type="button" title="Clear the run">Clear</button>
+          <div class="cluster" id="pathNav">
+            <span id="pathLabel" class="readout readout-hint"></span>
+            <div id="runControls" class="cluster">
+              <button id="clearPath" class="btn btn-quiet" type="button" title="Clear the run">Clear</button>
+              <button id="playBtn" class="btn btn-accent" type="button">Play</button>
+            </div>
+          </div>
+
+          <div class="cluster" id="strumField">
+            <span class="slider">
+              <input id="spread" type="range" min="0" max="100" step="5" value="60"
+                     aria-label="Strum speed"
+                     title="Strum speed — right is one sound, left is note by note" />
+              <span id="spreadLabel" class="readout"></span>
+            </span>
+            <button id="strumBtn" class="btn btn-accent" type="button">Strum</button>
+          </div>
         </div>
       </div>
     </section>
 
-    <!-- The practice bench: one tempo, one time signature, shared by the
-         click, the run and the progression. Always here, because a
-         metronome is worth having whatever is on the board. -->
-    <section class="panel panel-quiet" aria-label="Practice">
-      <div class="cluster">
-        <button id="metroBtn" class="btn" type="button"
-                title="A click at the tempo below">Metronome</button>
-        <span class="slider slider-wide">
-          <input id="bpm" type="range" min="30" max="400" step="1" value="80"
-                 aria-label="Tempo" title="Tempo, in beats per minute" />
-          <span id="bpmLabel" class="readout">80</span>
-        </span>
+    <!-- ============ PRACTICE ============================= -->
+    <section class="panel panel-quiet panel-practice" aria-label="Practice">
+      <button id="metroBtn" class="btn" type="button" title="A click at the tempo below">Metronome</button>
+      <span class="slider slider-wide">
+        <input id="bpm" type="range" min="30" max="400" step="1" value="80"
+               aria-label="Tempo" title="Tempo, in beats per minute" />
+        <span id="bpmLabel" class="readout">80</span>
+      </span>
+      <span id="beatReadout" class="readout"></span>
+
+      <button id="practiceMore" class="btn btn-quiet practice-more-btn" type="button"
+              aria-expanded="false">Bar, count-in, loop</button>
+
+      <div class="practice-extra" id="practiceExtra" hidden>
         <div class="select select-compact">
           <select id="meter" aria-label="Time signature" title="Beats to the bar">
             <option value="4">4/4</option>
@@ -179,29 +208,14 @@
                 title="A bar counted in before it starts">Count-in</button>
         <button id="loopBtn" class="btn" type="button"
                 title="Round and round, in four-bar phrases, until you press stop">Loop</button>
-        <!-- Where the beat is. Silent until something is counting. -->
-        <span id="beatReadout" class="readout"></span>
       </div>
     </section>
-
-    <div class="board-wrap">
-      <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
-    </div>
-
-    <div class="legend">
-      <span><span class="swatch" style="background:var(--root)"></span>Root</span>
-      <span><span class="swatch" style="background:var(--note)"></span><span id="legendTone">Scale tone</span></span>
-      <!-- Which way the run is going. Only meaningful where there is a
-           run, so it comes and goes with one — see syncCagedControls. -->
-      <span id="runLegend" class="legend-run">
-        <span><span class="swatch" style="background:var(--path-asc)"></span>Climbing</span>
-        <span><span class="swatch" style="background:var(--path-desc)"></span>Falling</span>
-      </span>
-      <span class="legend-tip" id="legendTip"></span>
-    </div>
 
   </div>
 
   <script type="module" src="view.js"></script>
+  <!-- Chrome only: chips, folds and drawers. It reads and drives the
+       controls view.js owns and never touches the board. -->
+  <script src="ui.js" defer></script>
 </body>
 </html>
