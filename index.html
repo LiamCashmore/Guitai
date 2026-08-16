@@ -7,7 +7,7 @@
   <title>Guitai — Fretboard</title>
   <!-- ?v= is a cache-buster: bump it whenever you deploy, so a phone
        that has been here before is made to fetch the new file. -->
-  <link rel="stylesheet" href="styles.css?v=2" />
+  <link rel="stylesheet" href="styles.css?v=3" />
 </head>
 <body>
   <div class="app">
@@ -148,8 +148,14 @@
         <button id="labelsBtn" class="btn btn-labels" type="button">Note names</button>
       </div>
 
-      <div class="board-wrap">
-        <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
+      <!-- The wrapper is a passthrough on a desktop. On a phone the neck
+           is stood on end inside it: the SVG is rotated a quarter turn so
+           the nut is at the top and the strings run across, and this box
+           is given the height that rotation actually occupies. -->
+      <div class="board-wrap" id="boardWrap">
+        <div class="board-rot" id="boardRot">
+          <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
+        </div>
       </div>
 
       <div class="board-foot">
@@ -213,11 +219,95 @@
       </div>
     </section>
 
+    <!-- ============ PHONE: THE BAR ======================== -->
+    <!-- Five things a player reaches for while playing. Everything else
+         is one tap behind one of them. Hidden outright on a desktop,
+         where all of it is already on screen. -->
+    <nav class="tabbar" id="tabbar" aria-label="Tools" hidden>
+      <button class="tab tab-play" id="tabPlay" type="button">
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+          <path d="M4 2.5 L15 9 L4 15.5 Z" fill="currentColor" />
+        </svg>
+        <span class="tab-name" id="tabPlayName">Play</span>
+      </button>
+
+      <button class="tab" id="tabLabels" type="button">
+        <span class="tab-glyph">Aa</span>
+        <span class="tab-name" id="tabLabelsName">Names</span>
+      </button>
+
+      <button class="tab" data-sheet="sheetView" type="button">
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+          <g fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M2 2 V16 M6 2 V16 M10 2 V16 M14 2 V16" />
+            <path d="M1 6 H17 M1 11 H17" opacity="0.55" />
+          </g>
+        </svg>
+        <span class="tab-name">Neck</span>
+      </button>
+
+      <button class="tab" data-sheet="sheetPractice" type="button">
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+          <circle cx="9" cy="9" r="7" fill="none" stroke="currentColor" stroke-width="1.5" />
+          <path d="M9 5 V9 L12 11" fill="none" stroke="currentColor"
+                stroke-width="1.5" stroke-linecap="round" />
+        </svg>
+        <span class="tab-name">Time</span>
+      </button>
+
+      <button class="tab" data-sheet="sheetSetup" type="button">
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+          <circle cx="9" cy="9" r="2.8" fill="none" stroke="currentColor" stroke-width="1.5" />
+          <circle cx="9" cy="9" r="6.6" fill="none" stroke="currentColor"
+                  stroke-width="1.5" stroke-dasharray="2.2 3.4" />
+        </svg>
+        <span class="tab-name">Setup</span>
+      </button>
+    </nav>
+
   </div>
+
+  <!-- ============ PHONE: THE SHEETS ======================= -->
+  <!-- Empty on purpose: ui.js moves the real panels in and out of these
+       as the screen changes size, so there is only ever one of each
+       control and view.js keeps hold of every one of them. -->
+  <div class="scrim" id="scrim" hidden></div>
+
+  <section class="sheet" id="sheetWhat" hidden aria-label="What is on the neck">
+    <header class="sheet-head">
+      <h2>On the neck</h2>
+      <button class="btn btn-quiet sheet-done" type="button" data-close>Done</button>
+    </header>
+    <div class="sheet-body" id="bodyWhat"></div>
+  </section>
+
+  <section class="sheet" id="sheetView" hidden aria-label="The neck">
+    <header class="sheet-head">
+      <h2>The neck</h2>
+      <button class="btn btn-quiet sheet-done" type="button" data-close>Done</button>
+    </header>
+    <div class="sheet-body" id="bodyView"></div>
+  </section>
+
+  <section class="sheet" id="sheetPractice" hidden aria-label="Practice">
+    <header class="sheet-head">
+      <h2>Practice</h2>
+      <button class="btn btn-quiet sheet-done" type="button" data-close>Done</button>
+    </header>
+    <div class="sheet-body" id="bodyPractice"></div>
+  </section>
+
+  <section class="sheet" id="sheetSetup" hidden aria-label="Setup">
+    <header class="sheet-head">
+      <h2>Setup</h2>
+      <button class="btn btn-quiet sheet-done" type="button" data-close>Done</button>
+    </header>
+    <div class="sheet-body" id="bodySetup"></div>
+  </section>
 
   <script type="module" src="view.js"></script>
   <!-- Chrome only: chips, folds and drawers. It reads and drives the
        controls view.js owns and never touches the board. -->
-  <script src="ui.js?v=2" defer></script>
+  <script src="ui.js?v=3" defer></script>
 </body>
 </html>

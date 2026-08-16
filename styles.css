@@ -920,8 +920,256 @@ input[type="range"]::-moz-range-thumb {
   #pegs { gap: 6px; }
 }
 
+/* ============================================================
+   PHONE — the neck stood on end
+   ============================================================
+   A guitar held in front of you is a vertical thing, and a phone is a
+   vertical screen, so on a phone the neck runs down it: nut at the top,
+   low string on the left, exactly the way a chord chart is drawn and the
+   way you see your own hand.
+
+   Nothing is redrawn to do it. The SVG is turned a quarter turn and the
+   type inside it turned back, so every marker, the capo, the position
+   bar and the run's line are the same objects doing the same things.
+
+   Everything that is not the neck goes into a sheet behind the bar at
+   the bottom. The panels themselves are moved there by ui.js rather than
+   duplicated, so there is still exactly one of every control.
+   ============================================================ */
+
+.board-rot { position: relative; }
+.tabbar { display: none; }
+
+body.phone {
+  padding: 0;
+  height: 100dvh;
+  overflow: hidden;
+}
+body.phone .app {
+  max-width: none;
+  height: 100dvh;
+  gap: 0;
+}
+
+/* ---- The strip at the top ---------------------------------- */
+/* The mark, what is on the neck, and the field. Nothing else: the rest
+   of what was up here is behind the gear tab now. */
+body.phone .masthead {
+  flex: none;
+  gap: 10px;
+  padding: max(8px, env(safe-area-inset-top)) 12px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-quiet);
+}
+body.phone .masthead h1,
+body.phone .masthead p,
+body.phone #foldBtn,
+body.phone #setupBtn { display: none; }
+body.phone .masthead-tools { gap: 6px; flex: none; }
+body.phone .sunmark { width: 30px; height: 30px; }
+
+/* The title IS the chooser: it says what is on the neck and opens the
+   sheet that changes it. */
+body.phone .fold-summary {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 8px;
+  padding: 0;
+  min-height: 34px;
+  background: none;
+  border: 0;
+}
+body.phone .fold-summary .fold-root { font-size: 17px; }
+body.phone .fold-summary .fold-scale { font-size: 11.5px; }
+body.phone .fold-tap { font-size: 15px; line-height: 1; opacity: 0.7; }
+
+/* ---- The neck ---------------------------------------------- */
+body.phone .panel-board {
+  flex: 1 1 auto;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+body.phone .board-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+body.phone .board-rot { width: 100%; }
+body.phone #board {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+/* The quarter turn, taken back out of the lettering. Everything else on
+   the board reads the same either way up. */
+body.phone #board text {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: rotate(-90deg);
+}
+
+/* ---- The bar ------------------------------------------------ */
+body.phone .tabbar {
+  display: flex;
+  flex: none;
+  align-items: stretch;
+  gap: 6px;
+  padding: 7px 8px calc(7px + env(safe-area-inset-bottom));
+  background: var(--surface-quiet);
+  border-top: 1px solid var(--line);
+}
+/* The six bands, one hairline of them, so the bar belongs to the page. */
+body.phone .tabbar::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0; right: 0;
+  height: 2px;
+  background: var(--sunset-x);
+}
+body.phone .tabbar { position: relative; }
+
+.tab {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 5px 2px;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.tab .tab-name {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.tab .tab-glyph { font-size: 15px; font-weight: 800; line-height: 18px; }
+.tab.active { color: var(--text); border-color: var(--line); background: var(--chip); }
+.tab:disabled { opacity: 0.35; }
+
+/* Play is the one thing you do rather than open, so it is the one thing
+   wearing colour. */
+.tab-play {
+  flex: 1.25 1 0;
+  flex-direction: row;
+  gap: 6px;
+  background: var(--band-2);
+  border-color: var(--band-2);
+  color: var(--on-band);
+}
+.tab-play .tab-name { font-size: 11px; }
+.tab-play:disabled { background: var(--chip); border-color: var(--line); color: var(--muted); }
+
+/* ---- The sheets --------------------------------------------- */
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgb(0 0 0 / 0.5);
+  animation: scrim-in 180ms ease;
+}
+@keyframes scrim-in { from { opacity: 0; } to { opacity: 1; } }
+
+.sheet {
+  position: fixed;
+  z-index: 41;
+  left: 0; right: 0; bottom: 0;
+  max-height: 82dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  box-shadow: 0 -18px 40px rgb(0 0 0 / 0.4);
+  animation: sheet-in 240ms cubic-bezier(0.22, 0.9, 0.3, 1);
+}
+/* The six bands, a hairline of them, along the sheet's own edge. */
+.sheet::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0; right: 0;
+  height: 2px;
+  background: var(--sunset-x);
+}
+@keyframes sheet-in { from { transform: translateY(100%); } to { transform: none; } }
+
+.sheet-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.sheet-head h2 {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.sheet-done { flex: none; min-height: 40px; }
+
+.sheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom));
+}
+.setup-field { padding: 12px 14px 0; }
+/* Panels lose their card once they are inside one. */
+.sheet-body .panel {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: none;
+}
+.sheet-body .board-tools,
+.sheet-body .board-foot {
+  border: 0;
+  background: none;
+  padding: 12px 14px;
+  gap: 10px;
+}
+.sheet-body .board-foot { border-top: 1px solid var(--line); }
+.sheet-body .btn-labels { margin-left: 0; }
+.sheet-body .board-actions { margin-left: 0; flex: 1 1 100%; }
+.sheet-body .legend { flex: 1 1 100%; }
+.sheet-body .practice-more-btn { margin-left: 0; }
+.sheet-body .field { flex: 1 1 100%; }
+.sheet-body .panel-setup,
+.sheet-body .panel-practice { padding: 12px 14px; }
+
 /* ---- Reduced motion ---------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
+  .sheet, .scrim { animation: none; }
   body { transition: none; }
   .note, .note-circle, #posHighlight { transition: opacity var(--fade); }
   .note.is-sounding .note-circle { transition: none; transform: none; }
