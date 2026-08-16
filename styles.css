@@ -860,15 +860,27 @@ input[type="range"]::-moz-range-thumb {
   .app { gap: 11px; }
 
   .masthead { gap: 10px; padding-bottom: 11px; }
-  .masthead h1 { font-size: 24px; }
+  .sunmark { width: 34px; height: 34px; }
+  .masthead h1 {
+    font-size: 22px;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .masthead p { display: none; }
 
-  .masthead-tools { gap: 7px; margin-left: auto; }
+  /* Four controls and a wordmark have to share 390px, so the tools are
+     allowed to shrink and the instrument menu gives up its width first —
+     the name on it is short enough to stand on its own. */
+  .masthead-tools { gap: 6px; margin-left: auto; min-width: 0; flex: 0 1 auto; }
   .theme-toggle { gap: 0; padding: 9px 11px; }
   .theme-toggle .label { display: none; }
   .btn-icon-text span { display: none; }
   .btn-icon-text { padding: 9px 12px; }
-  .select-compact select { min-width: 0; padding: 9px 28px 9px 10px; }
+  .select-compact { min-width: 0; }
+  .select-compact select { min-width: 0; width: 82px; padding: 9px 24px 9px 9px; }
+  .masthead-tools .select::after { right: 9px; }
 
   /* The fold is what makes room for the neck. */
   .btn-fold { display: inline-flex; align-items: center; justify-content: center; }
