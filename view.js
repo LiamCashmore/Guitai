@@ -34,7 +34,6 @@ import {
   numStrings,
   chromaticGrid,
   droneStrings,
-  displayOrder,
   capoFret,
   capoCovers,
   maxCapoFret,
@@ -43,7 +42,6 @@ import {
   setSpike,
   spikeRange,
   spikeFrets,
-  barFret,
   neckKey,
   handAtNut,
   fretUnderHand,
@@ -74,14 +72,16 @@ import {
   setTempo, setMetronome, metronomeOn, onCount, PHRASE_BARS,
 } from "./audio.js";
 
+// Where everything sits is worked out in layout.js, in the neck's own
+// two axes, and only turned into screen coordinates at the last moment.
+// That is what lets the same drawing code put the neck across a desktop
+// and down a phone — see the note at the top of that file.
+import * as L from "./layout.js";
+import { HORIZONTAL, VERTICAL } from "./layout.js";
+
 // ---- Visual config ----------------------------------------
 const markerFrets = [3, 5, 7, 9, 15, 17];   // single inlay dots
 const doubleMarker = 12;
-
-// The extra room up top is the window handle's lane.
-const PAD_L = 70, PAD_T = 74, PAD_R = 30, PAD_B = 24;
-const HANDLE_Y = 14, HANDLE_H = 24;
-const FRET_W = 62, STR_GAP = 46, R = 15; // note-circle radius
 // The capo's bar, and the six bands it is painted in — the same stops as
 // --sunset in styles.css, which is the same sunset the masthead's mark is
 // cut from. Kept here rather than read off the stripe because an SVG
@@ -96,13 +96,13 @@ const CAPO_BANDS = [
   ["var(--band-6)", 0.87, 1],
 ];
 // Recomputed rather than fixed, because the number of strings — and so
-// the height of the board — is a property of the instrument, not of the
-// app. `numFrets` and `numStrings` are live bindings from music.js, so
-// these simply read whatever is currently mounted.
+// the breadth of the board — is a property of the instrument, not of the
+// app, and which way the neck points is a property of the screen.
+// `numFrets` and `numStrings` are live bindings from music.js, so this
+// simply reads whatever is currently mounted.
 let boardW = 0, boardH = 0;
 function sizeBoard() {
-  boardW = PAD_L + numFrets * FRET_W + PAD_R;
-  boardH = PAD_T + (numStrings - 1) * STR_GAP + PAD_B;
+  ({ w: boardW, h: boardH } = L.boardSize());
 }
 sizeBoard();
 
@@ -140,65 +140,14 @@ function el(tag, attrs) {
   return n;
 }
 
-// The fret wire the capo is clamped up against.
-function capoX() {
-  return PAD_L + capoFret * FRET_W;
-}
-// Where a string's own nut sits. Ordinary strings all start at the
-// board's nut; a drone string — a banjo's 5th — starts at its own,
-// partway up the neck, so its whole neighbourhood shifts with it.
-function stringNutX(s) {
-  const nutFret = droneStrings.get(s);
-  return nutFret ? PAD_L + nutFret * FRET_W : PAD_L;
-}
-// x-center of a note at a given fret (0 = open, sits left of the nut).
-// `s` is only needed for fret 0, to find which nut "left of" means: the
-// board's, a drone string's own, or whatever is clamped to the string —
-// a capo across the neck, a spike beside the 5th. That is the nut the
-// open note now sounds from, so the open markers and the tuning printed
-// with them travel up the neck with the bar and sit just behind it, in
-// the dead frets nothing else can use.
-function fretX(f, s) {
-  if (f !== 0) return PAD_L + (f - 0.5) * FRET_W;
-  const bar = barFret(s);
-  return bar ? PAD_L + bar * FRET_W - 38 : stringNutX(s) - 34;
-}
-// Row of a string, bottom to top — usually the string index itself, but
-// an instrument can say otherwise (see fretboard.js's displayOrder).
-function stringRow(i) {
-  return displayOrder.indexOf(i);
-}
-// y-center of a row (row 0 drawn at the BOTTOM, top row highest).
-function rowY(row) {
-  return PAD_T + (numStrings - 1 - row) * STR_GAP;
-}
-function stringY(i) {
-  return rowY(stringRow(i));
-}
-// The board's vertical extremes — the top and bottom ROWS, not whichever
-// string happens to have the highest or lowest index. Only differ from
-// stringY(numStrings-1)/stringY(0) when an instrument reorders its rows.
-function boardTopY() { return PAD_T; }
-function boardBotY() { return PAD_T + (numStrings - 1) * STR_GAP; }
-
-/**
- * How far down a fret's wire reaches.
- *
- * Ordinarily to the bottom row, same as every other fret. But a fret a
- * drone string hasn't reached yet — a banjo's first five, up to and
- * including the one its own nut sits on — has no business drawing a
- * fretboard under a string that isn't there, so the wire stops short of
- * that row instead. The nut itself is the wood's edge, not a wire.
- */
-function fretBottomY(f) {
-  let cutRow = null;
-  for (const [s, nutFret] of droneStrings) {
-    if (f > nutFret) continue;
-    const row = stringRow(s);
-    cutRow = cutRow === null ? row : Math.max(cutRow, row);
-  }
-  return cutRow === null ? boardBotY() + 18 : rowY(cutRow) - STR_GAP / 2;
-}
+// The geometry proper lives in layout.js, which knows it in the neck's
+// own axes and which way the neck is currently pointing. What is left
+// here are the two shorthands the drawing code reaches for constantly —
+// a note's centre on screen, and a string's row — plus the marker radius,
+// which changes with the orientation because a phone is touched.
+const stringRow = L.stringRow;
+const notePoint = L.notePoint;
+const R = () => L.R();
 
 /**
  * The span of frets a position actually reaches: from its lowest played
@@ -415,6 +364,9 @@ let windowLayer = null;
 let handleGroup = null;
 let handleBar   = null;
 let handleLabel = null;
+// Which of the bar's two dimensions follows the neck — "width" across
+// the screen, "height" down it.
+let handleAlong = "width";
 let highlight   = null;
 let winDrag     = null;   // { grabbedAt } while the handle is held
 // The capo: the shade over the frets it has taken out of play, the bar
@@ -459,63 +411,76 @@ function drawBoard() {
   svg.setAttribute("height", boardH);
   svg.innerHTML = "";
 
-  const topY = boardTopY();
-  const botY = boardBotY();
+  const EDGE = L.metrics().EDGE;
+  const firstV = L.firstV(), lastV = L.lastV();
 
   // Wood. Ordinarily one slab — but a drone string's row has no neck
   // under it before that string's own nut, so it's cut short there
   // rather than drawn as if a fretboard existed for a string that
   // hasn't started yet.
+  //
+  // Every rectangle here is stated as the stretch of neck and the band
+  // of strings it covers; layout.js turns that into a screen box facing
+  // whichever way the board currently does.
   const droneEntries = [...droneStrings.entries()];
   if (droneEntries.length === 0) {
     svg.appendChild(el("rect", {
-      x: PAD_L, y: topY - 18, width: numFrets * FRET_W, height: (botY - topY) + 36,
+      ...L.box(0, firstV - EDGE, L.neckU(), lastV + EDGE),
       rx: 6, fill: "var(--wood)", stroke: "var(--wood-edge)", "stroke-width": 2
     }));
   } else {
-    const cutY = fretBottomY(0);
-    const notchLeft = Math.min(...droneEntries.map(([s]) => stringNutX(s)));
+    const cutV = L.fretEndV(0);
+    const notchU = Math.min(...droneEntries.map(([s]) => L.nutU(s)));
     svg.appendChild(el("rect", {
-      x: PAD_L, y: topY - 18, width: numFrets * FRET_W, height: cutY - (topY - 18),
+      ...L.box(0, firstV - EDGE, L.neckU(), cutV),
       rx: 6, fill: "var(--wood)", stroke: "var(--wood-edge)", "stroke-width": 2
     }));
     svg.appendChild(el("rect", {
-      x: notchLeft, y: cutY, width: PAD_L + numFrets * FRET_W - notchLeft, height: botY + 18 - cutY,
+      ...L.box(notchU, cutV, L.neckU(), lastV + EDGE),
       rx: 6, fill: "var(--wood)", stroke: "var(--wood-edge)", "stroke-width": 2
     }));
   }
 
-  // Inlay markers
-  const midY = (topY + botY) / 2;
+  // Inlay markers, down the middle of the board and either side of it
+  // at the twelfth.
+  const midV = L.midV();
   markerFrets.forEach(f => {
     if (f > numFrets) return;
-    svg.appendChild(el("circle", { cx: PAD_L + (f - 0.5) * FRET_W, cy: midY, r: 6, fill: "var(--inlay)" }));
+    const { x, y } = L.project(L.noteU(f, -1), midV);
+    svg.appendChild(el("circle", { cx: x, cy: y, r: 6, fill: "var(--inlay)" }));
   });
   [-1, 1].forEach(off => {
-    svg.appendChild(el("circle", {
-      cx: PAD_L + (doubleMarker - 0.5) * FRET_W, cy: midY + off * STR_GAP, r: 6, fill: "var(--inlay)"
-    }));
+    const { x, y } = L.project(L.noteU(doubleMarker, -1), midV + off * L.gap());
+    svg.appendChild(el("circle", { cx: x, cy: y, r: 6, fill: "var(--inlay)" }));
   });
 
   // The position highlight lives under the notes and slides with them.
+  // Given no size here — showBand sizes it — but it has to know which
+  // way it will be stretched, so it is built from a zero-length band.
   highlight = el("rect", {
-    id: "posHighlight", x: 0, y: topY - 24, width: 0, height: (botY - topY) + 48,
+    id: "posHighlight", ...L.box(0, firstV - 24, 0, lastV + 24),
     rx: 8, fill: "var(--root)", opacity: 0
   });
   svg.appendChild(highlight);
 
   // Fret wires + numbers
   for (let f = 0; f <= numFrets; f++) {
-    const x = PAD_L + f * FRET_W;
     svg.appendChild(el("line", {
       // Stops short of a drone string's row until that string actually
-      // reaches this fret — see fretBottomY.
-      x1: x, y1: topY - 18, x2: x, y2: fretBottomY(f),
+      // reaches this fret — see layout.js's fretEndV.
+      ...L.line(L.fretU(f), firstV - EDGE, L.fretU(f), L.fretEndV(f)),
       stroke: f === 0 ? "var(--nut)" : "var(--wire)",
       "stroke-width": f === 0 ? 6 : 2
     }));
     if (f > 0) {
-      const t = el("text", { x: PAD_L + (f - 0.5) * FRET_W, y: PAD_T - 20,
+      // The numbers run along the neck's edge — above it when the board
+      // lies across the screen, down its left when it stands on end —
+      // and stay upright either way, because a number read sideways is
+      // a number nobody reads.
+      const at = L.isVertical()
+        ? L.project(L.noteU(f, -1), lastV + EDGE + 14)
+        : L.project(L.noteU(f, -1), firstV - 24);
+      const t = el("text", { x: at.x, y: at.y + 4,
         "text-anchor": "middle", "font-size": 12, fill: "var(--muted)" });
       t.textContent = f;
       svg.appendChild(t);
@@ -525,7 +490,7 @@ function drawBoard() {
   // The frets the capo has taken out of play, shaded out under the
   // strings — the neck is still there behind the bar, there is just
   // nothing to be played on it.
-  capoShade = el("rect", { class: "capo-shade", x: PAD_L, y: 0, width: 0, height: 0 });
+  capoShade = el("rect", { class: "capo-shade", x: 0, y: 0, width: 0, height: 0 });
   svg.appendChild(capoShade);
 
   // Strings, thicker toward the low one at the bottom.
@@ -538,8 +503,8 @@ function drawBoard() {
   const perCourse = instrument.courses ?? 1;
   openLabels = [];
   chromaticGrid.forEach((_, i) => {
-    const y = stringY(i);
-    const nutX = stringNutX(i);
+    const v = L.stringV(i);
+    const nutU = L.nutU(i);
     const weight = 1 + (numStrings - 1 - i) / Math.max(1, numStrings - 1) * 2;
     // Paired strings are each thinner than a single would be, and sit
     // either side of where the course runs.
@@ -549,7 +514,7 @@ function drawBoard() {
       svg.appendChild(el("line", {
         // A drone string only exists from its own nut onward — drawing
         // it from the board's nut would show a string that isn't there.
-        x1: nutX, y1: y + offset, x2: PAD_L + numFrets * FRET_W, y2: y + offset,
+        ...L.line(nutU, v + offset, L.neckU(), v + offset),
         stroke: "var(--string)", "stroke-width": each,
       }));
     }
@@ -557,20 +522,25 @@ function drawBoard() {
     // where a banjo's actually is — with a curl of string leading up
     // into the run proper, rather than the dead-straight nut edge every
     // other string gets.
-    if (nutX !== PAD_L) {
-      const pegX = nutX - 34, pegY = y + 15;
+    if (nutU !== 0) {
+      // Stated in neck space and projected, so the curl leans the same
+      // way relative to the neck whichever way the neck is pointing.
+      const peg  = L.project(nutU - 34, v + 15);
+      const ctrl = L.project(nutU - 16, v + 15);
+      const join = L.project(nutU, v);
       svg.appendChild(el("path", {
-        d: `M ${pegX} ${pegY} Q ${nutX - 16} ${pegY} ${nutX} ${y}`,
+        d: `M ${peg.x} ${peg.y} Q ${ctrl.x} ${ctrl.y} ${join.x} ${join.y}`,
         fill: "none", stroke: "var(--string)", "stroke-width": each,
         "stroke-linecap": "round",
       }));
-      svg.appendChild(el("circle", { cx: pegX, cy: pegY, r: 4.5, fill: "var(--wood-edge)" }));
+      svg.appendChild(el("circle", { cx: peg.x, cy: peg.y, r: 4.5, fill: "var(--wood-edge)" }));
     }
     // Sat exactly where the open-note marker goes, so the tuning shows
     // through when that note is out of the scale and is hidden beneath
     // the marker when it is in — the notes draw on top of the board.
+    const at = notePoint(0, i);
     const lbl = el("text", {
-      x: fretX(0, i), y: y + 4, "text-anchor": "middle",
+      x: at.x, y: at.y + 4, "text-anchor": "middle",
       "font-size": 13, fill: "var(--muted)", "font-weight": 600,
     });
     lbl.textContent = tuning[i];
@@ -586,8 +556,13 @@ function drawBoard() {
   // the same cut as the mark in the masthead. Nothing else on the board
   // carries all six, so the one object you can pick up and move is the
   // one wearing the whole palette.
+  // The bands run across the bar's short side, so the gradient turns
+  // with the board: down the bar when the neck lies across the screen,
+  // along it when the neck stands on end.
   const defs = el("defs");
-  const grad = el("linearGradient", { id: "capoBands", x1: 0, y1: 0, x2: 0, y2: 1 });
+  const grad = L.isVertical()
+    ? el("linearGradient", { id: "capoBands", x1: 0, y1: 0, x2: 1, y2: 0 })
+    : el("linearGradient", { id: "capoBands", x1: 0, y1: 0, x2: 0, y2: 1 });
   CAPO_BANDS.forEach(([colour, from, to]) => {
     grad.appendChild(el("stop", { offset: from, "stop-color": colour }));
     grad.appendChild(el("stop", { offset: to,   "stop-color": colour }));
@@ -597,17 +572,15 @@ function drawBoard() {
 
   capoGroup = el("g", { class: "capo" });
   capoGroup.appendChild(el("rect", {
-    class: "capo-bar", x: -CAPO_W - 5, y: 0, width: CAPO_W, height: 0,
+    class: "capo-bar", ...L.box(-CAPO_W - 5, 0, -5, 0),
     rx: CAPO_W / 2, fill: "url(#capoBands)",
   }));
   // The screw that holds it on, on the low side of the neck where a
   // player's capo has one.
-  capoGroup.appendChild(el("circle", {
-    class: "capo-screw", cx: -CAPO_W / 2 - 5, cy: 0, r: 5,
-  }));
+  capoGroup.appendChild(el("circle", { class: "capo-screw", cx: 0, cy: 0, r: 5 }));
   capoGroup.addEventListener("pointerdown", e => {
     if (!capoFret) return;
-    capoDrag = { grabbedAt: boardPoint(e).x - capoX() };
+    capoDrag = { grabbedAt: alongPoint(e) - L.capoU() };
     e.preventDefault();
     e.stopPropagation();
   });
@@ -623,19 +596,19 @@ function drawBoard() {
   // it puts on the board.
   spikeParts = new Map();
   for (const [s] of droneStrings) {
-    const y = stringY(s);
+    const v = L.stringV(s);
 
-    const shade = el("rect", { class: "capo-shade", x: 0, y: y - 17, width: 0, height: 34 });
+    const shade = el("rect", { class: "capo-shade", x: 0, y: 0, width: 0, height: 0 });
     svg.appendChild(shade);
 
     const group = el("g", { class: "capo spike" });
     group.appendChild(el("rect", {
-      class: "capo-bar", x: -CAPO_W - 5, y: y - 17, width: CAPO_W, height: 34,
+      class: "capo-bar", ...L.box(-CAPO_W - 5, v - 17, -5, v + 17),
       rx: CAPO_W / 2, fill: "url(#capoBands)",
     }));
     group.addEventListener("pointerdown", e => {
       if (!spikeAt(s)) return;
-      spikeDrag = { string: s, grabbedAt: boardPoint(e).x - (PAD_L + spikeAt(s) * FRET_W) };
+      spikeDrag = { string: s, grabbedAt: alongPoint(e) - L.fretU(spikeAt(s)) };
       e.preventDefault();
       e.stopPropagation();
     });
@@ -645,7 +618,8 @@ function drawBoard() {
     // Sat under the fret before the string's own nut — the 4th, for a
     // banjo's 5th string — which is the last patch of board before the
     // short neck begins and the only place here that stays empty.
-    const bx = PAD_L + (droneStrings.get(s) - 1.5) * FRET_W;
+    const pin = L.project(L.fretU(droneStrings.get(s) - 1.5), v);
+    const bx = pin.x, y = pin.y;
     const button = el("g", { class: "spike-btn" });
     button.appendChild(el("circle", { cx: bx, cy: y, r: 9 }));
     button.appendChild(el("path", {
@@ -692,27 +666,45 @@ function drawBoard() {
   // positions rather than being redrawn in a new place each time.
   windowLayer = el("g", { id: "windowLayer" });
   handleGroup = el("g", { class: "win-handle" });
+
+  // Built at the neck's start and then slid along it, so only the one
+  // dimension that follows the neck has to change as the band grows.
+  const seat = L.handleBox(0, 0);
+  handleAlong = seat.along;                    // "width" or "height"
   handleBar = el("rect", {
-    class: "bar", x: 0, y: HANDLE_Y, width: 0, height: HANDLE_H,
+    class: "bar", x: seat.x, y: seat.y, width: seat.width, height: seat.height,
     rx: 2, fill: "var(--pos-bar)", opacity: 0.95,
   });
+  handleBar.setAttribute(handleAlong, 0);
   handleGroup.appendChild(handleBar);
-  handleLabel = el("text", {
-    x: 12, y: HANDLE_Y + HANDLE_H / 2 + 4,
-    "font-size": 12, "font-weight": 700, fill: "var(--pos-bar-ink)",
-    "letter-spacing": 0.5,
-  });
-  handleGroup.appendChild(handleLabel);
-  // Grip lines sit at a fixed spot near the left, so only the bar's width
-  // has to change as the band grows or shrinks.
-  [52, 58, 64].forEach(x => handleGroup.appendChild(el("line", {
-    x1: x, y1: HANDLE_Y + 6, x2: x, y2: HANDLE_Y + HANDLE_H - 6,
-    stroke: "var(--note-ring)", "stroke-width": 2, opacity: 0.55,
-  })));
+
+  // Across the screen there is room to print which frets the hand is
+  // over. Down it there is not — the bar is a thumb's width — so the
+  // frets are named in the readout beside the stepper instead, and the
+  // bar carries only its grip lines.
+  if (!L.isVertical()) {
+    handleLabel = el("text", {
+      x: seat.x + 12, y: seat.y + seat.height / 2 + 4,
+      "font-size": 12, "font-weight": 700, fill: "var(--pos-bar-ink)",
+      "letter-spacing": 0.5,
+    });
+    handleGroup.appendChild(handleLabel);
+    [52, 58, 64].forEach(off => handleGroup.appendChild(el("line", {
+      x1: seat.x + off, y1: seat.y + 6, x2: seat.x + off, y2: seat.y + seat.height - 6,
+      stroke: "var(--note-ring)", "stroke-width": 2, opacity: 0.55,
+    })));
+  } else {
+    handleLabel = null;
+    [10, 16, 22].forEach(off => handleGroup.appendChild(el("line", {
+      x1: seat.x + 7, y1: seat.y + off, x2: seat.x + seat.width - 7, y2: seat.y + off,
+      stroke: "var(--note-ring)", "stroke-width": 2, opacity: 0.55,
+    })));
+  }
+
   handleGroup.addEventListener("pointerdown", e => {
     if (!activeBand) return;
-    const { x1 } = bandEdges(activeBand.lo, activeBand.hi);
-    winDrag = { grabbedAt: boardPoint(e).x - x1 };
+    const { u1 } = bandEdges(activeBand.lo, activeBand.hi);
+    winDrag = { grabbedAt: alongPoint(e) - u1 };
     e.preventDefault();
     e.stopPropagation();
   });
@@ -720,16 +712,11 @@ function drawBoard() {
   svg.appendChild(windowLayer);
 }
 
-// Where a band from `lo` to `hi` sits in board coordinates. A band at the
-// nut reaches back over the open notes, which sit off the end of the
-// neck — or, with a capo on, just behind the bar.
-function bandEdges(lo, hi) {
-  return {
-    x1: handAtNut(lo) ? (capoFret ? capoX() : PAD_L) - 52
-                      : PAD_L + (lo - 1) * FRET_W,
-    x2: PAD_L + Math.min(hi, numFrets) * FRET_W,
-  };
-}
+// Where a band from `lo` to `hi` sits along the neck. A band at the nut
+// reaches back over the open notes, which sit off the end of the neck —
+// or, with a capo on, just behind the bar.
+const bandEdges = (lo, hi) => L.bandU(lo, hi, handAtNut(lo));
+
 const windowEdges = lo => {
   const hi = Math.min(lo + windowWidth() - 1, numFrets);
   return { ...bandEdges(lo, hi), hi };
@@ -743,16 +730,16 @@ const windowEdges = lo => {
  * to glide from.
  */
 function showBand(lo, hi, { settle = false } = {}) {
-  const { x1, x2 } = bandEdges(lo, hi);
-  const topY = boardTopY(), botY = boardBotY();
+  const { u1, u2 } = bandEdges(lo, hi);
   if (settle && highlight.getAttribute("opacity") === "0") {
     highlight.style.transition = "none";
     requestAnimationFrame(() => { highlight.style.transition = ""; });
   }
-  highlight.setAttribute("x", x1);
-  highlight.setAttribute("width", x2 - x1);
-  highlight.setAttribute("y", topY - 24);
-  highlight.setAttribute("height", (botY - topY) + 48);
+  // The band covers a stretch of neck and every string on it, with a
+  // little spare either side; which screen rectangle that is depends on
+  // which way the board faces, and layout.js settles that.
+  const at = L.box(u1, L.firstV() - 24, u2, L.lastV() + 24);
+  for (const k in at) highlight.setAttribute(k, at[k]);
   highlight.setAttribute("opacity", 0.12);
 }
 
@@ -784,13 +771,13 @@ function renderWindowHandle() {
   if (!activeBand) { handleGroup.style.display = "none"; return; }
 
   const { lo, hi } = activeBand;
-  const { x1, x2 } = bandEdges(lo, hi);
+  const { u1, u2 } = bandEdges(lo, hi);
   handleGroup.style.display = "";
-  // Slid by transform and stretched by width, both of which CSS can ease,
-  // so the bar travels and resizes instead of reappearing elsewhere.
-  handleGroup.style.transform = `translate(${x1}px, 0px)`;
-  handleBar.setAttribute("width", x2 - x1);
-  handleLabel.textContent = `${lo}–${hi}`;
+  // Slid by transform and stretched along the neck, both of which CSS can
+  // ease, so the bar travels and resizes instead of reappearing elsewhere.
+  handleGroup.style.transform = L.slideAlong(u1);
+  handleBar.setAttribute(handleAlong, Math.max(0, u2 - u1));
+  if (handleLabel) handleLabel.textContent = `${lo}–${hi}`;
 }
 
 /**
@@ -811,12 +798,12 @@ function syncBars() {
     parts.group.style.display = at ? "" : "none";
     parts.shade.style.display = at ? "" : "none";
     if (at) {
-      const x = PAD_L + at * FRET_W;
-      parts.group.style.transform = `translate(${x}px, 0px)`;
+      const v = L.stringV(s);
+      parts.group.style.transform = L.slideAlong(L.fretU(at));
       // The dead stretch runs from the string's own nut up to the pin —
       // frets the string has, but cannot sound while it is hooked under.
-      parts.shade.setAttribute("x", stringNutX(s));
-      parts.shade.setAttribute("width", x - stringNutX(s));
+      const shade = L.box(L.nutU(s), v - 17, L.fretU(at), v + 17);
+      for (const k in shade) parts.shade.setAttribute(k, shade[k]);
     }
     parts.button.classList.toggle("on", !!at);
     parts.button.querySelector("title").textContent = at
@@ -832,34 +819,47 @@ function syncBars() {
       // the four strings on the neck and passes under the 5th, which is
       // off the low side of it and goes on droning at pitch.
       const rows = [];
-      for (let s = 0; s < numStrings; s++) if (capoCovers(s)) rows.push(stringY(s));
-      const top = Math.min(...rows) - 17;
-      const bot = Math.max(...rows) + 17;
+      for (let s = 0; s < numStrings; s++) if (capoCovers(s)) rows.push(L.stringV(s));
+      const from = Math.min(...rows) - 17;
+      const to   = Math.max(...rows) + 17;
 
-      capoGroup.style.transform = `translate(${capoX()}px, 0px)`;
+      // The bar sits just behind its fret wire and is slid along the
+      // neck; the shade covers everything between the board's nut and it.
+      capoGroup.style.transform = L.slideAlong(L.capoU());
       const bar = capoGroup.querySelector(".capo-bar");
-      bar.setAttribute("y", top);
-      bar.setAttribute("height", bot - top);
-      capoGroup.querySelector(".capo-screw").setAttribute("cy", bot + 8);
+      const box = L.box(-CAPO_W - 5, from, -5, to);
+      for (const k in box) bar.setAttribute(k, box[k]);
 
-      capoShade.setAttribute("x", PAD_L);
-      capoShade.setAttribute("width", capoX() - PAD_L);
-      capoShade.setAttribute("y", top);
-      capoShade.setAttribute("height", bot - top);
+      // The screw rides off the low string's end of the bar — which is
+      // the bottom of the board across the screen and the left of it
+      // down the screen, and `project` knows which.
+      const screw = L.project(-CAPO_W / 2 - 5, to + 8);
+      const head = capoGroup.querySelector(".capo-screw");
+      head.setAttribute("cx", screw.x);
+      head.setAttribute("cy", screw.y);
+
+      const shade = L.box(0, from, L.capoU(), to);
+      for (const k in shade) capoShade.setAttribute(k, shade[k]);
     }
   }
 
   // The open notes have moved, and so has what they are called.
   openLabels.forEach((lbl, s) => {
-    lbl.setAttribute("x", fretX(0, s));
+    const at = notePoint(0, s);
+    lbl.setAttribute("x", at.x);
+    lbl.setAttribute("y", at.y + 4);
     lbl.textContent = tuning[s];
   });
 
   if (btn) {
-    btn.textContent = on ? `Fret ${capoFret}` : "Off";
+    // The button is named for the thing, not for its state: it says Capo
+    // whether one is on or not, and lights up when there is. A control
+    // that renames itself is a control you have to read before you can
+    // use it, and the bar on the neck already says which fret it is at.
     btn.classList.toggle("active", on);
+    btn.setAttribute("aria-pressed", String(on));
     btn.title = on
-      ? "Drag the capo along the neck, or tap to take it off"
+      ? `Capo at fret ${capoFret} — drag it along the neck, or tap to take it off`
       : "Clamp a capo on the 1st fret — then drag it where you want it";
   }
 }
@@ -1063,7 +1063,7 @@ function syncTuning() {
 
 function makeNote() {
   const group  = el("g", { class: "note" });
-  const circle = el("circle", { class: "note-circle", cx: 0, cy: 0, r: R,
+  const circle = el("circle", { class: "note-circle", cx: 0, cy: 0, r: R(),
                                 stroke: "var(--note-ring)", "stroke-width": 2 });
   const label  = el("text", { class: "note-label", x: 0, y: 4,
                               "text-anchor": "middle", "font-weight": 700 });
@@ -1084,7 +1084,7 @@ function renderNotes(grid, mode) {
     let rank = 0;
     row.forEach((cell, f) => {
       if (!cell) return;
-      wanted.set(`${s}:${rank++}`, { cell, x: fretX(f, s), y: stringY(s), string: s, fret: f });
+      wanted.set(`${s}:${rank++}`, { cell, ...notePoint(f, s), string: s, fret: f });
     });
   });
 
@@ -1302,6 +1302,14 @@ function boardPoint(evt) {
   return pt.matrixTransform(svg.getScreenCTM().inverse());
 }
 
+// How far along the neck a pointer is — which screen axis that means is
+// layout.js's business. Everything clamped to the neck and dragged along
+// it (the capo, a spike, the hand's bar) measures itself this way.
+function alongPoint(evt) {
+  const { x, y } = boardPoint(evt);
+  return L.unproject(x, y).u;
+}
+
 // The scale note nearest the pointer, anywhere on the board. Snapping to
 // notes rather than to coordinates means a dragged note only ever lands
 // somewhere the scale actually goes.
@@ -1310,7 +1318,8 @@ function cellNearest(x, y) {
   for (let s = 0; s < numStrings; s++) {
     for (let f = 0; f <= numFrets; f++) {
       if (!visibleCells || !visibleCells.has(`${s}:${f}`)) continue;
-      const dx = fretX(f, s) - x, dy = stringY(s) - y;
+      const at = notePoint(f, s);
+      const dx = at.x - x, dy = at.y - y;
       const gap = dx * dx + dy * dy;
       if (gap < bestGap) { bestGap = gap; best = { string: s, fret: f }; }
     }
@@ -1319,11 +1328,13 @@ function cellNearest(x, y) {
 }
 
 // The nearest scale note along one string, for drags that stay on it.
-function cellNearestOnString(string, x) {
+// Measured along the neck rather than in x, so it means the same thing
+// whichever way the board is facing.
+function cellNearestOnString(string, u) {
   let best = null, bestGap = Infinity;
   for (let f = 0; f <= numFrets; f++) {
     if (!visibleCells || !visibleCells.has(`${string}:${f}`)) continue;
-    const gap = Math.abs(fretX(f, string) - x);
+    const gap = Math.abs(L.noteU(f, string) - u);
     if (gap < bestGap) { bestGap = gap; best = { string, fret: f }; }
   }
   return best;
@@ -1371,8 +1382,7 @@ function onDragMove(evt) {
   // capo is clamped behind a particular fret, and there is nowhere
   // between two of them for it to be.
   if (capoDrag) {
-    const x = boardPoint(evt).x - capoDrag.grabbedAt;
-    const fret = Math.round((x - PAD_L) / FRET_W);
+    const fret = L.fretAtU(alongPoint(evt) - capoDrag.grabbedAt);
     // Never off the neck at the top, and never back to the nut — taking
     // it off is the button's job, not something a drag should do by
     // accident on the way past the 1st fret.
@@ -1382,8 +1392,7 @@ function onDragMove(evt) {
   // A spike slides the same way, between its own string's nut and as far
   // up as a capo could go.
   if (spikeDrag) {
-    const x = boardPoint(evt).x - spikeDrag.grabbedAt;
-    const fret = Math.round((x - PAD_L) / FRET_W);
+    const fret = L.fretAtU(alongPoint(evt) - spikeDrag.grabbedAt);
     const { lo, hi } = spikeRange(spikeDrag.string);
     moveSpike(spikeDrag.string, Math.max(lo, Math.min(hi, fret)));
     return;
@@ -1392,8 +1401,7 @@ function onDragMove(evt) {
   // window; for scales and arpeggios it steps to whichever position
   // starts nearest, so each shape keeps its own width.
   if (winDrag) {
-    const x = boardPoint(evt).x - winDrag.grabbedAt;
-    const fret = Math.round((x - PAD_L) / FRET_W) + 1;
+    const fret = L.fretAtU(alongPoint(evt) - winDrag.grabbedAt) + 1;
 
     if (activeStops) {
       let nearest = 0;
@@ -1424,7 +1432,7 @@ function onDragMove(evt) {
   const p = boardPoint(evt);
   // Ends roam the board; a waypoint slides along the string it sits on.
   const cell = drag.role === "via"
-    ? cellNearestOnString(drag.string, p.x)
+    ? cellNearestOnString(drag.string, L.unproject(p.x, p.y).u)
     : cellNearest(p.x, p.y);
   if (!cell) return;
 
@@ -1723,7 +1731,7 @@ function renderPathLine({ animate = true } = {}) {
     ? runSegments(pathResult.cells).map(seg => ({
         dir: seg.dir,
         from: seg.from,
-        points: seg.cells.map(c => ({ x: fretX(c.fret, c.string), y: stringY(c.string) })),
+        points: seg.cells.map(c => notePoint(c.fret, c.string)),
       }))
     : [];
 
@@ -1943,7 +1951,7 @@ function startPlayhead(cells, startsAt, gap) {
   stopPlayhead();
   if (!pathSpark || cells.length < 2 || !gap) return;
 
-  const points = cells.map(c => ({ x: fretX(c.fret, c.string), y: stringY(c.string) }));
+  const points = cells.map(c => notePoint(c.fret, c.string));
 
   // Which way each step travels, taken from the same split that coloured
   // the line underneath — so what lights up is that line at full strength
@@ -2665,7 +2673,8 @@ function renderChord(root, type, voicing, ghostRange) {
   // It sits in this layer, under the note markers, which is also where
   // the finger sits under the strings.
   for (const barre of gripFingering(voicing.cells)?.barres ?? []) {
-    const x = fretX(barre.fret);
+    const u = L.noteU(barre.fret, barre.from);
+    const r = R();
     // Drawn by row, not by the two string numbers at its ends — a barre
     // covers every string between them, and on an instrument whose rows
     // aren't in string-number order (a banjo's drone sits apart from
@@ -2680,12 +2689,13 @@ function renderChord(root, type, voicing, ghostRange) {
     let segStart = 0;
     for (let i = 1; i <= rows.length; i++) {
       if (i < rows.length && rows[i] === rows[i - 1] + 1) continue;
-      const from = rowY(rows[segStart]), to = rowY(rows[i - 1]);
+      // Stated as the stretch of neck and the strings the finger lies
+      // across; which way that rectangle runs on screen is layout's call.
+      const from = L.rowV(rows[segStart]), to = L.rowV(rows[i - 1]);
       chordLayer.appendChild(el("rect", {
         class: "barre",
-        x: x - R, y: Math.min(from, to) - R,
-        width: R * 2, height: Math.abs(to - from) + R * 2,
-        rx: R, ry: R,
+        ...L.box(u - r, Math.min(from, to) - r, u + r, Math.max(from, to) + r),
+        rx: r, ry: r,
       }));
       segStart = i;
     }
@@ -2694,7 +2704,8 @@ function renderChord(root, type, voicing, ghostRange) {
   // Strings the grip leaves out, crossed through beyond the nut.
   for (let s = 0; s < numStrings; s++) {
     if (voicing.strings.includes(s)) continue;
-    const y = stringY(s), x = fretX(0, s), r = 5;
+    const { x, y } = notePoint(0, s);
+    const r = 5;
     [1, -1].forEach(dir => {
       chordLayer.appendChild(el("line", {
         x1: x - r, y1: y - r * dir, x2: x + r, y2: y + r * dir,
@@ -3505,6 +3516,41 @@ if (saved.capo) {
 // instrument's drone strings, so a banjo's survives a trip to the guitar.
 for (const [s, f] of saved.spikes ?? []) setSpike(Number(s), f);
 
+// ---- Which way the neck points ----------------------------
+/**
+ * A neck is long and thin; so is a phone. Across a desktop the board
+ * lies the way a guitar lies on your lap, and on a phone it stands up
+ * the way a chord chart is printed — nut at the top, low string down the
+ * left — so the whole neck is reachable by scrolling the page rather
+ * than by dragging a strip sideways inside it.
+ *
+ * The same breakpoint the stylesheet folds the chrome at, so the two can
+ * never disagree about which layout is showing.
+ */
+const phone = window.matchMedia?.("(max-width: 720px)");
+
+function applyOrientation({ redraw = true } = {}) {
+  const want = phone?.matches ? VERTICAL : HORIZONTAL;
+  if (!L.setOrientation(want)) return false;
+  document.documentElement.setAttribute("data-board", want);
+  if (redraw) {
+    // Every marker's position is measured against the old axes, so they
+    // go with the board and are rebuilt against the new ones.
+    liveNotes.clear();
+    drawBoard();
+    syncBars();
+    render({ animate: false });
+  }
+  return true;
+}
+
+applyOrientation({ redraw: false });
+document.documentElement.setAttribute("data-board", L.orientation());
+
 drawBoard();
 syncBars();
 initControls();
+
+// Turning a phone on its side, or dragging a desktop window narrow, is a
+// change of board and not just of chrome.
+phone?.addEventListener?.("change", () => applyOrientation());

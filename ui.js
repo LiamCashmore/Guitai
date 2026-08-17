@@ -121,17 +121,6 @@
 
   drawer($("setupBtn"), $("setupPanel"));
 
-  const practiceMore = $("practiceMore");
-  const practiceExtra = $("practiceExtra");
-  if (practiceMore && practiceExtra) {
-    practiceMore.addEventListener("click", () => {
-      const open = practiceExtra.hasAttribute("hidden");
-      practiceExtra.toggleAttribute("hidden", !open);
-      practiceMore.setAttribute("aria-expanded", String(open));
-      practiceMore.textContent = open ? "Fewer" : "Bar, count-in, loop";
-    });
-  }
-
   // ---- Folding the choosers away (phone) ---------------------
   // A fretboard wants the screen. Once you have chosen what to look at,
   // the choosers can go, leaving one line that says what is on the board
@@ -161,9 +150,7 @@
     s.textContent = scale;
     const t = document.createElement("span");
     t.className = "fold-tap readout";
-    // On a phone this line is the title of the screen, so it says what it
-    // is with a chevron rather than a sentence.
-    t.textContent = isPhone() ? "⌄" : "tap to change";
+    t.textContent = "tap to change";
     summary.append(r, s, t);
   }
 
@@ -177,291 +164,161 @@
   }
 
   foldBtn?.addEventListener("click", () => setFolded(!whatPanel.hasAttribute("hidden")));
-  summary?.addEventListener("click", () => {
-    if (isPhone()) openSheet($("sheetWhat"));
-    else setFolded(false);
-  });
+  summary?.addEventListener("click", () => setFolded(false));
   ["root", "scale", "kind"].forEach(id => $(id)?.addEventListener("change", () => {
     if (summary && !summary.hasAttribute("hidden")) paintSummary();
   }));
 
-  /* ============================================================
-     PHONE — the neck stood on end, everything else in a sheet
+  // ============================================================
+  // THE PHONE'S SHELL
+  //
+  // Same document, same controls, regrouped. Nothing below builds a
+  // second Metronome button or a second Play: it picks the existing ones
+  // up and puts them somewhere else, then puts them back. view.js goes
+  // on holding them by id and never notices they moved — which is why
+  // its display toggles, its labels and its disabled states all keep
+  // working in the drawers exactly as they do in the cards.
+  // ============================================================
 
-     Two things happen below 720px, and only there.
+  const phone = window.matchMedia("(max-width: 720px)");
 
-     The neck is turned a quarter turn: the SVG is rotated by CSS and the
-     box around it given the height that rotation occupies. Nothing in
-     view.js is told about it — the board is drawn exactly as it always
-     was, and pointer coordinates come back through getScreenCTM, which
-     already accounts for the turn. So the capo still drags, the position
-     bar still slides, notes are still picked, and all of it now happens
-     down the screen instead of across it.
+  // Where each control lived before it was borrowed, so leaving the
+  // phone layout puts the page back exactly as it was rather than
+  // approximately as it was.
+  const home = new Map();
 
-     Everything that isn't the neck is MOVED — not copied — into one of
-     four sheets behind the bar at the bottom, and moved back when the
-     window grows. There is still one #playBtn, one #capoBtn, one of
-     everything, held by the same listeners view.js bound to them.
-     ============================================================ */
-
-  const phoneQuery = window.matchMedia("(max-width: 720px)");
-  function isPhone() { return document.body.classList.contains("phone"); }
-
-  // Where a moved node came from, so it can go back exactly there.
-  const homes = new Map();
-  function park(node, host, before = null) {
-    if (!node || !host) return;
-    if (!homes.has(node)) homes.set(node, { parent: node.parentNode, next: node.nextSibling });
-    host.insertBefore(node, before);
-  }
-  function unpark(node) {
-    const home = homes.get(node);
-    if (!home) return;
-    home.parent.insertBefore(node, home.next);
-    homes.delete(node);
-  }
-
-  // ---- The sheets ---------------------------------------------
-  const scrim = $("scrim");
-  let openedSheet = null;
-
-  function closeSheet() {
-    if (!openedSheet) return;
-    openedSheet.setAttribute("hidden", "");
-    openedSheet = null;
-    scrim?.setAttribute("hidden", "");
-    syncTabs();
-  }
-
-  function openSheet(sheet) {
-    if (!sheet) return;
-    if (openedSheet === sheet) { closeSheet(); return; }
-    if (openedSheet) openedSheet.setAttribute("hidden", "");
-    openedSheet = sheet;
-    sheet.removeAttribute("hidden");
-    scrim?.removeAttribute("hidden");
-    sheet.querySelector(".sheet-body").scrollTop = 0;
-    syncTabs();
-  }
-
-  scrim?.addEventListener("click", closeSheet);
-  document.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", closeSheet));
-  document.addEventListener("keydown", e => { if (e.key === "Escape") closeSheet(); });
-
-  const tabbar = $("tabbar");
-  const sheetTabs = [...document.querySelectorAll(".tab[data-sheet]")];
-  sheetTabs.forEach(tab => tab.addEventListener("click", () => openSheet($(tab.dataset.sheet))));
-
-  function syncTabs() {
-    sheetTabs.forEach(tab => {
-      tab.classList.toggle("active", openedSheet === $(tab.dataset.sheet));
-    });
-  }
-
-  // ---- Play, in the bar ----------------------------------------
-  // A proxy rather than the button itself: which button it stands for
-  // changes with what is on the neck — a run is played, a chord is
-  // strummed — and view.js shows and hides those two as it decides.
-  const tabPlay = $("tabPlay");
-  const tabPlayName = $("tabPlayName");
-
-  function liveSound() {
-    // The inline display view.js sets, not the computed one — these live
-    // inside a sheet, and a closed sheet computes everything to none.
-    const strum = $("strumField"), run = $("pathNav");
-    if (strum && strum.style.display !== "none") return $("strumBtn");
-    if (run && run.style.display !== "none") return $("playBtn");
-    return null;
-  }
-
-  function syncPlay() {
-    if (!tabPlay || !isPhone()) return;
-    const src = liveSound();
-    tabPlay.disabled = !src || src.disabled;
-    tabPlayName.textContent = src ? src.textContent.trim() : "Play";
-  }
-
-  tabPlay?.addEventListener("click", () => {
-    const src = liveSound();
-    if (src && !src.disabled) src.click();
-    // The label flips to Stop the moment it is pressed.
-    requestAnimationFrame(syncPlay);
-  });
-
-  // ---- Labels, in the bar --------------------------------------
-  const tabLabels = $("tabLabels");
-  const tabLabelsName = $("tabLabelsName");
-  const LABEL_SHORT = { "Note names": "Names", "Scale degrees": "Degrees", "Hidden": "Off" };
-
-  function syncLabelTab() {
-    if (!tabLabels || !labelsBtn) return;
-    const text = labelsBtn.textContent.trim();
-    tabLabelsName.textContent = LABEL_SHORT[text] ?? text;
-    tabLabels.classList.toggle("active", text !== "Hidden");
-  }
-  tabLabels?.addEventListener("click", () => labelsBtn?.click());
-
-  // ---- The neck, turned --------------------------------------
-  const boardWrap = $("boardWrap");
-  const boardRot  = $("boardRot");
-  const board     = $("board");
-  let boardScale  = 1;
-
-  function layoutBoard() {
-    if (!board || !boardRot || !boardWrap) return;
-    if (!isPhone()) {
-      board.style.transform = "";
-      boardRot.style.height = "";
-      return;
+  function borrow(host, selectors) {
+    for (const sel of selectors) {
+      const node = document.querySelector(sel);
+      if (!node || !host) continue;
+      if (!home.has(node)) home.set(node, { parent: node.parentNode, next: node.nextSibling });
+      host.appendChild(node);
     }
-    // view.js sets these to the board's own size in board units.
-    const w = parseFloat(board.getAttribute("width"));
-    const h = parseFloat(board.getAttribute("height"));
-    if (!w || !h) return;
-
-    // Across the screen goes the board's height — the strings. Held
-    // between limits: squeezed too far the strings are closer than a
-    // fingertip, and stretched too far the neck is wider than the phone.
-    boardScale = Math.max(0.75, Math.min(1.6, boardWrap.clientWidth / h));
-    // Clockwise, so the nut lands at the top and the low string on the
-    // left — a chord chart, and the view a player has of their own hand.
-    board.style.transform =
-      `translateX(${h * boardScale}px) rotate(90deg) scale(${boardScale})`;
-    boardRot.style.height = `${w * boardScale}px`;
   }
 
-  /**
-   * Keep the stretch of neck being shown on the screen.
-   *
-   * A phone holds five or six frets at a time, so stepping to a position
-   * eight frets up would otherwise move the notes somewhere you cannot
-   * see. The band under the notes is the thing to follow — it is exactly
-   * what the position is — and it is only scrolled to when it has
-   * actually gone off the edge, so ordinary play never moves the neck.
-   */
-  function followBand() {
-    if (!isPhone() || !boardWrap) return;
-    const band = document.getElementById("posHighlight");
-    if (!band || band.getAttribute("opacity") === "0") return;
-    const x = parseFloat(band.getAttribute("x"));
-    const w = parseFloat(band.getAttribute("width"));
-    if (!isFinite(x) || !w) return;
+  function giveBack() {
+    for (const [node, at] of home) at.parent.insertBefore(node, at.next);
+    home.clear();
+  }
 
-    const top = x * boardScale, bottom = (x + w) * boardScale;
-    const seen = boardWrap.clientHeight;
-    if (top >= boardWrap.scrollTop + 12 && bottom <= boardWrap.scrollTop + seen - 12) return;
-    boardWrap.scrollTo({
-      top: Math.max(0, (top + bottom) / 2 - seen / 2),
-      behavior: reduceMotion.matches ? "auto" : "smooth",
+  // Two buttons that belong together are wrapped so they sit side by
+  // side in a drawer instead of stacking. The wrapper is ours, so it is
+  // thrown away again when the controls go home.
+  function pair(host, selectors) {
+    const nodes = selectors.map(s => document.querySelector(s)).filter(Boolean);
+    if (nodes.length < 2 || !host) return borrow(host, selectors);
+    const row = document.createElement("div");
+    row.className = "pair";
+    row.dataset.uiPair = "1";
+    host.appendChild(row);
+    borrow(row, selectors);
+  }
+
+  function dropPairs() {
+    document.querySelectorAll("[data-ui-pair]").forEach(row => row.remove());
+  }
+
+  // ---- The three drawers -------------------------------------
+  const SHEETS = [
+    { tab: "tabView",     sheet: "sheetView",     body: "sheetViewBody" },
+    { tab: "tabPractice", sheet: "sheetPractice", body: "sheetPracticeBody" },
+    { tab: "tabSetup",    sheet: "sheetSetup",    body: "sheetSetupBody" },
+  ];
+
+  function openSheet(which) {
+    let any = false;
+    SHEETS.forEach(({ tab, sheet }) => {
+      const on = sheet === which;
+      $(sheet)?.toggleAttribute("hidden", !on);
+      $(tab)?.classList.toggle("active", on);
+      $(tab)?.setAttribute("aria-expanded", String(on));
+      if (on) any = true;
     });
-  }
-  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-
-  // The board is rebuilt outright when the instrument changes — a
-  // different number of strings is a different size of board — so the
-  // turn is measured again, and the band watched again, whenever it is.
-  let bandWatch = null;
-  function watchBand() {
-    bandWatch?.disconnect();
-    const band = document.getElementById("posHighlight");
-    if (!band) return;
-    bandWatch = new MutationObserver(() => followBand());
-    bandWatch.observe(band, { attributes: true, attributeFilter: ["x", "width", "opacity"] });
-  }
-  if (board) {
-    new MutationObserver(() => { layoutBoard(); watchBand(); })
-      .observe(board, { childList: true, attributes: true, attributeFilter: ["width", "height"] });
+    // The neck is given the drawer's room back so nothing you are
+    // reading ends up behind it.
+    document.body.classList.toggle("sheet-open", any);
   }
 
-  // ---- Moving in, and back out --------------------------------
-  let instrumentBox = null;
-  function instrumentField() {
-    if (!instrumentBox) {
-      instrumentBox = document.createElement("div");
-      instrumentBox.className = "field wide setup-field";
-      const label = document.createElement("label");
-      label.setAttribute("for", "instrument");
-      label.textContent = "Instrument";
-      instrumentBox.appendChild(label);
-    }
-    $("bodySetup")?.prepend(instrumentBox);
-    return instrumentBox;
-  }
+  const closeSheets = () => openSheet(null);
 
-  function enterPhone() {
-    document.body.classList.add("phone");
-
-    // The title line goes up beside the mark and becomes the chooser.
-    park(summary, document.querySelector(".masthead"), document.querySelector(".masthead-tools"));
-    summary?.removeAttribute("hidden");
-    whatPanel?.removeAttribute("hidden");
-
-    park(whatPanel, $("bodyWhat"));
-    park(document.querySelector(".board-tools"), $("bodyView"));
-    park(document.querySelector(".board-foot"), $("bodyView"));
-    park(document.querySelector(".panel-practice"), $("bodyPractice"));
-    // The instrument menu loses the masthead it was labelled by, so it is
-    // given one of its own down here.
-    park(document.querySelector(".masthead-tools .select-compact"), instrumentField());
-    park($("setupPanel"), $("bodySetup"));
-    // Setup is a sheet of its own now, so its drawer is always open
-    // inside it — there is nothing left for it to fold away from.
-    $("setupPanel")?.removeAttribute("hidden");
-
-    tabbar?.removeAttribute("hidden");
-    paintSummary();
-    syncPlay();
-    syncLabelTab();
-    requestAnimationFrame(() => { layoutBoard(); watchBand(); });
-  }
-
-  function exitPhone() {
-    closeSheet();
-    document.body.classList.remove("phone");
-    tabbar?.setAttribute("hidden", "");
-
-    [...homes.keys()].forEach(unpark);
-    instrumentBox?.remove();
-    // Back to how the desktop leaves them: setup folded, the choosers open.
-    $("setupPanel")?.setAttribute("hidden", "");
-    $("setupBtn")?.classList.remove("active");
-    $("setupBtn")?.setAttribute("aria-expanded", "false");
-    summary?.setAttribute("hidden", "");
-    whatPanel?.removeAttribute("hidden");
-    foldBtn?.setAttribute("aria-expanded", "true");
-    foldBtn?.classList.remove("folded");
-    layoutBoard();
-  }
-
-  function applyWidth() {
-    if (phoneQuery.matches === isPhone()) { layoutBoard(); return; }
-    phoneQuery.matches ? enterPhone() : exitPhone();
-  }
-
-  phoneQuery.addEventListener("change", applyWidth);
-  window.addEventListener("resize", layoutBoard);
-  window.addEventListener("orientationchange", () => setTimeout(layoutBoard, 200));
-
-  // What the bar stands for changes as view.js changes the board.
-  ["pathNav", "strumField", "playBtn", "strumBtn"].forEach(id => {
-    const node = $(id);
-    if (!node) return;
-    new MutationObserver(syncPlay).observe(node, {
-      attributes: true, childList: true, characterData: true, subtree: true,
+  SHEETS.forEach(({ tab, sheet }) => {
+    $(tab)?.addEventListener("click", () => {
+      openSheet($(sheet)?.hasAttribute("hidden") ? sheet : null);
     });
   });
-  if (labelsBtn) {
-    new MutationObserver(syncLabelTab).observe(labelsBtn, {
-      childList: true, characterData: true, subtree: true,
+  document.querySelectorAll(".sheet-close")
+    .forEach(btn => btn.addEventListener("click", closeSheets));
+
+  // ---- Moving in and out -------------------------------------
+  // The hidden menus behind the chips become the real controls here, so
+  // they stop being hidden from assistive technology as well as from
+  // sight — and go back to being a backing store on the way out.
+  function exposeMenus(on) {
+    [["kind", "Type"], ["root", "Root"]].forEach(([id, name]) => {
+      const sel = $(id);
+      if (!sel) return;
+      sel.classList.toggle("visually-hidden", !on);
+      if (on) {
+        sel.removeAttribute("aria-hidden");
+        sel.removeAttribute("tabindex");
+        sel.setAttribute("aria-label", name);
+      } else {
+        sel.setAttribute("aria-hidden", "true");
+        sel.setAttribute("tabindex", "-1");
+        sel.removeAttribute("aria-label");
+      }
     });
   }
+
+  let onPhone = null;
+
+  function layout() {
+    const want = phone.matches;
+    if (want === onPhone) return;
+    onPhone = want;
+
+    if (want) {
+      exposeMenus(true);
+
+      // What the markers say, what else is on the board, and what the
+      // colours mean — everything about looking at it rather than
+      // playing it.
+      borrow($("sheetViewBody"), ["#labelsBtn"]);
+      pair($("sheetViewBody"), ["#ghostField", "#openField"]);
+      borrow($("sheetViewBody"), ["#progEdit", ".board-foot .legend"]);
+
+      // Tempo, and the bar it is counted in.
+      borrow($("sheetPracticeBody"),
+        ["#metroBtn", ".panel-practice .slider-wide", "#beatReadout", "#practiceExtra"]);
+
+      // Which instrument, tuned how.
+      borrow($("sheetSetupBody"),
+        [".masthead .select-compact", ".panel-setup .field", "#tuningEdit"]);
+
+      // Playing the board is the bar's whole job, so whichever of these
+      // view.js has decided is showing takes the wide slot.
+      borrow($("tabbarPrimary"), ["#runControls", "#strumField"]);
+
+      $("sheets")?.removeAttribute("hidden");
+      $("tabbar")?.removeAttribute("hidden");
+    } else {
+      closeSheets();
+      $("sheets")?.setAttribute("hidden", "");
+      $("tabbar")?.setAttribute("hidden", "");
+      exposeMenus(false);
+      giveBack();
+      dropPairs();
+    }
+  }
+
+  layout();
+  phone.addEventListener("change", layout);
 
   // The menus are filled by view.js after this file runs, so the chips
   // and the summary are brought up to date once everything is in place.
   requestAnimationFrame(() => {
     syncKind?.();
     syncRoot?.();
-    applyWidth();
     paintSummary();
   });
 })();

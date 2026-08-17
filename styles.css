@@ -371,6 +371,16 @@ select {
 select:hover { border-color: var(--line-hover); }
 option { background: var(--chip); color: var(--text); }
 
+/* The phone's two menus. They hold the same #kind and #root the chips
+   drive, so on a desktop the row is simply not drawn — see the phone
+   block at the foot of this file.
+
+   It has to come after `.select`, not before: both are one class deep,
+   so the later rule wins, and declared the other way round the wrapper
+   went on being a flex box and left its chevron floating beside the
+   Progressions chip with nothing under it. */
+.what-phone { display: none; }
+
 /* ---- Typing a progression ---------------------------------- */
 #progEdit { display: none; }
 #progEdit.on { display: flex; }
@@ -665,16 +675,15 @@ input[type="range"]::-moz-range-thumb {
 
 /* ---- Practice ---------------------------------------------- */
 .panel-practice { padding: 10px 16px; }
-.practice-more-btn { margin-left: auto; white-space: nowrap; }
 
+/* On the line with the metronome rather than under it: the bar, the
+   count-in and the loop are all part of the same click. */
 .practice-extra {
-  flex: 1 1 100%;
+  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  padding-top: 11px;
-  border-top: 1px solid var(--line);
 }
 
 /* ---- The folded summary (phone) ---------------------------- */
@@ -852,324 +861,294 @@ input[type="range"]::-moz-range-thumb {
   pointer-events: none;
 }
 
-/* ---- Narrow screens ---------------------------------------- */
-/* The choosers fold; the neck keeps its size and scrolls, because a
-   fretboard squeezed to phone width stops being readable. */
-@media (max-width: 720px) {
-  body { padding: 16px 12px 30px; }
-  .app { gap: 11px; }
+/* ---- The phone's own layout -------------------------------- */
+/*
+   A page on a desktop and an app on a phone.
 
-  .masthead { gap: 10px; padding-bottom: 11px; }
-  .sunmark { width: 34px; height: 34px; }
-  .masthead h1 {
-    font-size: 22px;
+   The desktop stacks cards down a scrolling page, which is right when
+   there is room for all of them at once. A phone has room for one thing,
+   and that thing is the neck — so here the page stops scrolling and
+   becomes a shell instead: a header that stays, a strip of choosers that
+   folds away, the neck filling everything left over and scrolling inside
+   itself, and a bar under the thumb.
+
+   The neck itself turns with it. Across a desktop it lies the way a
+   guitar lies on your lap; here it stands up the way a chord chart is
+   printed, nut at the top and the low string down the left, so a phone's
+   long axis is the neck's long axis and the whole board is reached by
+   scrolling rather than by dragging a strip sideways. That half of the
+   change is in layout.js — see the note at the top of it.
+
+   Everything the cards used to hold is still one tap away, in three
+   drawers over the bar. Not copies: ui.js moves the very controls the
+   desktop shows into them, so there is still exactly one Metronome
+   button in the document and view.js is still holding it.
+*/
+@media (max-width: 720px) {
+  html { height: 100%; }
+
+  body {
+    height: 100%;
+    padding: 0;
+    /* The shell fills the screen and nothing scrolls but the board.
+       `dvh` so the bar isn't left under a phone browser's own chrome as
+       it slides away; `vh` for anything that has never heard of it. */
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .app {
+    flex: 1 1 auto;
+    min-height: 0;             /* or the board can't give the shell back its overflow */
+    max-width: none;
+    gap: 0;
+    padding: 0;
+  }
+
+  /* ---- Header ---- */
+  .masthead {
+    flex: none;
+    gap: 10px;
+    padding: 12px 12px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  .masthead h1 { font-size: 22px; }
+  .masthead p { display: none; }
+
+  .masthead-tools { gap: 7px; margin-left: auto; }
+  .theme-toggle { gap: 0; padding: 9px 11px; }
+  .theme-toggle .label { display: none; }
+
+  /* Instrument and Setup have gone to the drawer at the bottom, where
+     the rest of setting the instrument up lives. */
+  .masthead .select-compact,
+  #setupBtn { display: none; }
+
+  /* The fold is what makes room for the neck. */
+  .btn-fold { display: inline-flex; align-items: center; justify-content: center; }
+  .fold-summary { display: flex; margin: 0 12px 8px; }
+
+  /* ---- Choosers ---- */
+  .panel-what {
+    flex: none;
+    gap: 8px;
+    padding: 10px 12px;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    background: var(--bg);
+  }
+  .panel-what::before { display: none; }
+
+  /* Sixteen roots and four kinds are two blocks of chips on a desktop
+     and two menus here — at this width the chips cost more screen than
+     the neck can spare, and a menu says the same thing in one line. */
+  #kindChips, .what-root { display: none; }
+  .what-phone { display: flex; }
+  .what-phone-kind { gap: 8px; }
+  .select-kind { flex: 1 1 auto; }
+  .select-kind select {
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  /* The root beside what it is the root of, and printed large — it is
+     the one letter on this screen you change most often. */
+  .select-root { flex: 0 0 92px; }
+  .select-root select { font-size: 16px; font-weight: 700; padding-right: 26px; }
+  .select-root::after { right: 11px; }
+
+  .what-row { gap: 8px; flex-wrap: nowrap; }
+  .field { flex: 1 1 100%; }
+  .field-material { flex: 1 1 auto; min-width: 0; }
+  .field-material > label { display: none; }
+
+  /* ---- The board fills what is left ---- */
+  .panel-board {
+    flex: 1 1 auto;
+    min-height: 0;
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+  }
+
+  /* One line, always. Moving the hand is a strip of controls over the
+     neck, and a strip that reflows to two lines as the position's name
+     grows shoves the board down the screen while you are reading it. */
+  .board-tools {
+    flex: none;
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg);
+  }
+  .board-tools > * { flex: none; }
+  #posLabel {
+    flex: 1 1 auto;
     min-width: 0;
+    font-size: 10px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .masthead p { display: none; }
+  /* Labels, ghost tones and open strings are in the View drawer now, so
+     the strip over the neck holds only the two things that move the hand
+     rather than change what it is looking at. */
+  .board-tools .btn-labels,
+  .board-tools #ghostField,
+  .board-tools #openField { display: none !important; }
 
-  /* Four controls and a wordmark have to share 390px, so the tools are
-     allowed to shrink and the instrument menu gives up its width first —
-     the name on it is short enough to stand on its own. */
-  .masthead-tools { gap: 6px; margin-left: auto; min-width: 0; flex: 0 1 auto; }
-  .theme-toggle { gap: 0; padding: 9px 11px; }
-  .theme-toggle .label { display: none; }
-  .btn-icon-text span { display: none; }
-  .btn-icon-text { padding: 9px 12px; }
-  .select-compact { min-width: 0; }
-  .select-compact select { min-width: 0; width: 82px; padding: 9px 24px 9px 9px; }
-  .masthead-tools .select::after { right: 9px; }
+  #cagedNav { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; }
+  #capoBtn { margin-left: auto; }
+  #cagedBtn, #capoBtn { padding-left: 11px; padding-right: 11px; font-size: 11px; }
 
-  /* The fold is what makes room for the neck. */
-  .btn-fold { display: inline-flex; align-items: center; justify-content: center; }
-  .fold-summary { display: flex; }
+  /* The one thing on this screen that scrolls. */
+  .board-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 0 0 12px;
+    -webkit-overflow-scrolling: touch;
+  }
+  #board { margin: 0 auto; }
 
-  .panel { gap: 10px; padding: 14px 12px 12px; }
-  .panel-what { gap: 10px; }
-  .what-row { gap: 8px; }
-  .field { flex: 1 1 calc(50% - 5px); }
-  .field.wide { flex: 1 1 100%; }
+  /* The foot's contents have gone to the bar and the View drawer. */
+  .board-foot,
+  .panel-practice,
+  .panel-setup { display: none !important; }
 
-  /* Twelve semitones and their second spellings won't sit in one row on
-     a phone, so the roots wrap into a keyboard-shaped block instead. */
-  .chips-root { grid-template-columns: repeat(6, minmax(0, 1fr)); }
-  .chip-root { min-height: 44px; }
-  .chips .btn { flex: 1 1 calc(50% - 4px); }
+  /* ---- The drawers ---- */
+  .sheets {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: calc(66px + env(safe-area-inset-bottom, 0px));
+    z-index: 30;
+  }
+  .sheet {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-height: 58vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 12px 14px 14px;
+    background: var(--surface-quiet);
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    box-shadow: 0 -12px 28px rgb(0 0 0 / 0.28);
+  }
+  .sheet-head { display: flex; align-items: center; gap: 8px; }
+  .sheet-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent-text);
+  }
+  .sheet-close {
+    margin-left: auto;
+    width: 32px;
+    min-height: 32px;
+    font-size: 16px;
+    line-height: 1;
+    color: var(--muted);
+    background: transparent;
+    border: 1.5px solid var(--line);
+    border-radius: var(--r);
+    cursor: pointer;
+  }
+  .sheet-body { display: flex; flex-direction: column; gap: 11px; }
+  .sheet-body .cluster,
+  .sheet-body .field { width: 100%; }
+  /* The instrument menu is sized to its own text in the masthead; in a
+     drawer it has a column to itself, so it takes it — otherwise the
+     chevron is left stranded at the far edge of a short box. */
+  .sheet-body .select-compact { width: 100%; }
+  .sheet-body .select-compact select { min-width: 0; }
+  .sheet-body .btn-labels { margin-left: 0; }
+  .sheet-body .slider { width: 100%; }
+  .sheet-body .slider input[type="range"] { flex: 1 1 auto; width: auto; min-width: 0; }
+  .sheet-body .legend { gap: 10px 16px; font-size: 10px; flex-wrap: wrap; }
+  .sheet-body .legend-tip { display: none; }
+  /* Two of a kind sit side by side rather than stacking: ghost tones and
+     open strings are a pair, and so are count-in and loop. */
+  .sheet-body .pair { display: flex; gap: 8px; }
+  .sheet-body .pair > * { flex: 1 1 0; }
+  #practiceExtra { margin-left: 0; gap: 8px; }
+  #practiceExtra > * { flex: 1 1 0; }
 
-  .board-tools, .board-foot { gap: 8px 10px; padding: 10px; }
-  .btn-labels { margin-left: 0; }
-  .board-actions { margin-left: 0; flex: 1 1 100%; }
-  .legend { gap: 10px 14px; font-size: 10px; }
-  .legend-tip { display: none; }
+  /* ---- The bar ---- */
+  .tabbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px calc(9px + env(safe-area-inset-bottom, 0px));
+    background: var(--surface);
+    border-top: 1px solid var(--line);
+  }
+  .tabbar-primary {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  /* Whichever of the two is showing takes the slot; the button itself
+     stretches and the things beside it stay the size they are. Never
+     wrapped — the bar is one line under the thumb. */
+  .tabbar-primary > * { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; }
+  .tabbar-primary .btn-accent { flex: 1 1 auto; justify-content: center; min-height: 48px; }
+  .tabbar-primary .btn-quiet { flex: 0 0 auto; }
+  .tabbar-primary .slider { flex: 0 1 96px; }
+  .tabbar-primary .slider input[type="range"] { width: 100%; min-width: 0; }
+  .tabbar-primary .slider .readout { display: none; }
+  /* Nothing to play — the slot collapses rather than leaving a gap the
+     size of a button. */
+  .tabbar-primary:empty { display: none; }
 
-  #posLabel { min-width: 0; flex: 1 1 auto; }
-  #pathLabel { flex: 1 1 100%; }
-  #cagedNav { flex: 1 1 auto; }
+  .btn-tab {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    min-height: 48px;
+    padding: 0;
+    font-size: 13px;
+    font-weight: 700;
+  }
 
-  .panel-practice { padding: 10px 12px; }
-  .practice-more-btn { margin-left: 0; }
-  .slider-wide input[type="range"] { width: 100%; min-width: 120px; }
-  .slider-wide { flex: 1 1 160px; }
+  /* The board is behind the bar and the drawers, so it is given room to
+     scroll past them rather than ending underneath. */
+  .board-wrap { padding-bottom: calc(78px + env(safe-area-inset-bottom, 0px)); }
 
-  /* Fingers, not pointers. */
+  /* ---- Fingers, not pointers ---- */
   button, select { min-height: 44px; }
   .btn-icon { min-width: 44px; }
   .peg .btn-icon { min-width: 30px; min-height: 38px; padding: 3px; }
   #pegs { gap: 6px; }
 }
 
-/* ============================================================
-   PHONE — the neck stood on end
-   ============================================================
-   A guitar held in front of you is a vertical thing, and a phone is a
-   vertical screen, so on a phone the neck runs down it: nut at the top,
-   low string on the left, exactly the way a chord chart is drawn and the
-   way you see your own hand.
-
-   Nothing is redrawn to do it. The SVG is turned a quarter turn and the
-   type inside it turned back, so every marker, the capo, the position
-   bar and the run's line are the same objects doing the same things.
-
-   Everything that is not the neck goes into a sheet behind the bar at
-   the bottom. The panels themselves are moved there by ui.js rather than
-   duplicated, so there is still exactly one of every control.
-   ============================================================ */
-
-.board-rot { position: relative; }
-.tabbar { display: none; }
-
-body.phone {
-  padding: 0;
-  height: 100dvh;
-  overflow: hidden;
+/* A drawer open pushes the neck up rather than covering it, so the notes
+   you are reading are never behind the thing you just opened. */
+@media (max-width: 720px) {
+  body.sheet-open .board-wrap {
+    padding-bottom: calc(78px + 58vh + env(safe-area-inset-bottom, 0px));
+  }
 }
-body.phone .app {
-  max-width: none;
-  height: 100dvh;
-  gap: 0;
-}
-
-/* ---- The strip at the top ---------------------------------- */
-/* The mark, what is on the neck, and the field. Nothing else: the rest
-   of what was up here is behind the gear tab now. */
-body.phone .masthead {
-  flex: none;
-  gap: 10px;
-  padding: max(8px, env(safe-area-inset-top)) 12px 8px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface-quiet);
-}
-body.phone .masthead h1,
-body.phone .masthead p,
-body.phone #foldBtn,
-body.phone #setupBtn { display: none; }
-body.phone .masthead-tools { gap: 6px; flex: none; }
-body.phone .sunmark { width: 30px; height: 30px; }
-
-/* The title IS the chooser: it says what is on the neck and opens the
-   sheet that changes it. */
-body.phone .fold-summary {
-  display: flex;
-  flex: 1 1 auto;
-  min-width: 0;
-  gap: 8px;
-  padding: 0;
-  min-height: 34px;
-  background: none;
-  border: 0;
-}
-body.phone .fold-summary .fold-root { font-size: 17px; }
-body.phone .fold-summary .fold-scale { font-size: 11.5px; }
-body.phone .fold-tap { font-size: 15px; line-height: 1; opacity: 0.7; }
-
-/* ---- The neck ---------------------------------------------- */
-body.phone .panel-board {
-  flex: 1 1 auto;
-  min-height: 0;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-}
-body.phone .board-wrap {
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-}
-body.phone .board-rot { width: 100%; }
-body.phone #board {
-  position: absolute;
-  top: 0;
-  left: 0;
-  transform-origin: 0 0;
-}
-/* The quarter turn, taken back out of the lettering. Everything else on
-   the board reads the same either way up. */
-body.phone #board text {
-  transform-box: fill-box;
-  transform-origin: center;
-  transform: rotate(-90deg);
-}
-
-/* ---- The bar ------------------------------------------------ */
-body.phone .tabbar {
-  display: flex;
-  flex: none;
-  align-items: stretch;
-  gap: 6px;
-  padding: 7px 8px calc(7px + env(safe-area-inset-bottom));
-  background: var(--surface-quiet);
-  border-top: 1px solid var(--line);
-}
-/* The six bands, one hairline of them, so the bar belongs to the page. */
-body.phone .tabbar::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0; right: 0;
-  height: 2px;
-  background: var(--sunset-x);
-}
-body.phone .tabbar { position: relative; }
-
-.tab {
-  flex: 1 1 0;
-  min-width: 0;
-  min-height: 48px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  padding: 5px 2px;
-  border: 1px solid transparent;
-  border-radius: var(--r);
-  background: none;
-  color: var(--muted);
-  font: inherit;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-.tab .tab-name {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-}
-.tab .tab-glyph { font-size: 15px; font-weight: 800; line-height: 18px; }
-.tab.active { color: var(--text); border-color: var(--line); background: var(--chip); }
-.tab:disabled { opacity: 0.35; }
-
-/* Play is the one thing you do rather than open, so it is the one thing
-   wearing colour. */
-.tab-play {
-  flex: 1.25 1 0;
-  flex-direction: row;
-  gap: 6px;
-  background: var(--band-2);
-  border-color: var(--band-2);
-  color: var(--on-band);
-}
-.tab-play .tab-name { font-size: 11px; }
-.tab-play:disabled { background: var(--chip); border-color: var(--line); color: var(--muted); }
-
-/* ---- The sheets --------------------------------------------- */
-.scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  background: rgb(0 0 0 / 0.5);
-  animation: scrim-in 180ms ease;
-}
-@keyframes scrim-in { from { opacity: 0; } to { opacity: 1; } }
-
-.sheet {
-  position: fixed;
-  z-index: 41;
-  left: 0; right: 0; bottom: 0;
-  max-height: 82dvh;
-  display: flex;
-  flex-direction: column;
-  background: var(--surface);
-  box-shadow: 0 -18px 40px rgb(0 0 0 / 0.4);
-  animation: sheet-in 240ms cubic-bezier(0.22, 0.9, 0.3, 1);
-}
-/* The six bands, a hairline of them, along the sheet's own edge. */
-.sheet::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0; right: 0;
-  height: 2px;
-  background: var(--sunset-x);
-}
-@keyframes sheet-in { from { transform: translateY(100%); } to { transform: none; } }
-
-.sheet-head {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--line);
-}
-.sheet-head h2 {
-  flex: 1 1 auto;
-  margin: 0;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.sheet-done { flex: none; min-height: 40px; }
-
-.sheet-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding-bottom: calc(10px + env(safe-area-inset-bottom));
-}
-.setup-field { padding: 12px 14px 0; }
-/* Panels lose their card once they are inside one. */
-.sheet-body .panel {
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  background: none;
-}
-.sheet-body .board-tools,
-.sheet-body .board-foot {
-  border: 0;
-  background: none;
-  padding: 12px 14px;
-  gap: 10px;
-}
-.sheet-body .board-foot { border-top: 1px solid var(--line); }
-.sheet-body .btn-labels { margin-left: 0; }
-.sheet-body .board-actions { margin-left: 0; flex: 1 1 100%; }
-.sheet-body .legend { flex: 1 1 100%; }
-.sheet-body .practice-more-btn { margin-left: 0; }
-.sheet-body .field { flex: 1 1 100%; }
-.sheet-body .panel-setup,
-.sheet-body .panel-practice { padding: 12px 14px; }
 
 /* ---- Reduced motion ---------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
-  .sheet, .scrim { animation: none; }
   body { transition: none; }
   .note, .note-circle, #posHighlight { transition: opacity var(--fade); }
   .note.is-sounding .note-circle { transition: none; transform: none; }

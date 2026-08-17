@@ -5,9 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="color-scheme" content="light" />
   <title>Guitai — Fretboard</title>
-  <!-- ?v= is a cache-buster: bump it whenever you deploy, so a phone
-       that has been here before is made to fetch the new file. -->
-  <link rel="stylesheet" href="styles.css?v=3" />
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div class="app">
@@ -86,10 +84,30 @@
 
     <!-- ============ WHAT IS ON THE BOARD ================= -->
     <section class="panel panel-what" id="whatPanel" aria-label="Choose what to show">
+      <!-- The phone's first line: which of the four displays. On a
+           desktop this row is not drawn — the chips below say the same
+           thing without opening a menu. -->
+      <div class="what-row what-phone what-phone-kind">
+        <div class="select select-kind">
+          <select id="kind" class="visually-hidden" aria-hidden="true" tabindex="-1">
+            <option value="scale">Scales</option>
+            <option value="arpeggio">Arpeggios</option>
+            <option value="chord">Chords</option>
+            <option value="progression">Progressions</option>
+          </select>
+        </div>
+      </div>
+
       <div class="what-row">
         <!-- Built by ui.js from the menu below, which stays as the one
              place the choice actually lives. -->
         <div class="chips" id="kindChips" role="group" aria-label="Type"></div>
+
+        <!-- Phone: the root sits beside what it is the root of. -->
+        <div class="select select-root what-phone">
+          <select id="root" class="visually-hidden" aria-hidden="true" tabindex="-1"></select>
+        </div>
+
         <div class="field wide field-material">
           <label for="scale" id="scaleLabel">Scale</label>
           <div class="select"><select id="scale"></select></div>
@@ -108,15 +126,6 @@
         <span id="progReadout" class="readout"></span>
       </div>
 
-      <!-- The real controls. Kept in the DOM, and in view.js's hands;
-           the chips above are just a nicer way to reach them. -->
-      <select id="kind" class="visually-hidden" aria-hidden="true" tabindex="-1">
-        <option value="scale">Scales</option>
-        <option value="arpeggio">Arpeggios</option>
-        <option value="chord">Chords</option>
-        <option value="progression">Progressions</option>
-      </select>
-      <select id="root" class="visually-hidden" aria-hidden="true" tabindex="-1"></select>
     </section>
 
     <!-- Phone only: what is on the board, when the choosers are folded. -->
@@ -134,8 +143,11 @@
                   title="Next position (→)" aria-label="Next position">›</button>
         </div>
 
-        <!-- On at the 1st fret, then dragged along the neck. -->
-        <button id="capoBtn" class="btn" type="button" title="Clamp a capo on, then drag it">Off</button>
+        <!-- On at the 1st fret, then dragged along the neck. It keeps
+             its name in both states and lights up when one is clamped
+             on; which fret that is, the bar on the neck already says. -->
+        <button id="capoBtn" class="btn" type="button" aria-pressed="false"
+                title="Clamp a capo on, then drag it">Capo</button>
 
         <div class="cluster" id="ghostField">
           <button id="ghostBtn" class="btn" type="button">Ghost tones</button>
@@ -146,16 +158,29 @@
 
         <!-- One button, three states: names, degrees, nothing. -->
         <button id="labelsBtn" class="btn btn-labels" type="button">Note names</button>
+
+        <!-- Playing what is on the board belongs with the controls that
+             put it there, not in a separate strip underneath. Exactly
+             one of these is ever showing: a run has a Play, a grip has a
+             Strum. On a phone ui.js lifts whichever it is into the bar. -->
+        <div class="cluster" id="runControls">
+          <button id="clearPath" class="btn btn-quiet" type="button" title="Clear the run">Clear</button>
+          <button id="playBtn" class="btn btn-accent" type="button">Play</button>
+        </div>
+
+        <div class="cluster" id="strumField">
+          <span class="slider">
+            <input id="spread" type="range" min="0" max="100" step="5" value="60"
+                   aria-label="Strum speed"
+                   title="Strum speed — right is one sound, left is note by note" />
+            <span id="spreadLabel" class="readout"></span>
+          </span>
+          <button id="strumBtn" class="btn btn-accent" type="button">Strum</button>
+        </div>
       </div>
 
-      <!-- The wrapper is a passthrough on a desktop. On a phone the neck
-           is stood on end inside it: the SVG is rotated a quarter turn so
-           the nut is at the top and the strings run across, and this box
-           is given the height that rotation actually occupies. -->
-      <div class="board-wrap" id="boardWrap">
-        <div class="board-rot" id="boardRot">
-          <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
-        </div>
+      <div class="board-wrap">
+        <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
       </div>
 
       <div class="board-foot">
@@ -168,25 +193,13 @@
           </span>
         </div>
 
+        <!-- What is left down here is what the board is telling you —
+             the key to the colours, and what to do next. The controls
+             that act on it have gone up to the strip above. -->
         <div class="board-actions">
           <span class="legend-tip" id="legendTip"></span>
-
           <div class="cluster" id="pathNav">
             <span id="pathLabel" class="readout readout-hint"></span>
-            <div id="runControls" class="cluster">
-              <button id="clearPath" class="btn btn-quiet" type="button" title="Clear the run">Clear</button>
-              <button id="playBtn" class="btn btn-accent" type="button">Play</button>
-            </div>
-          </div>
-
-          <div class="cluster" id="strumField">
-            <span class="slider">
-              <input id="spread" type="range" min="0" max="100" step="5" value="60"
-                     aria-label="Strum speed"
-                     title="Strum speed — right is one sound, left is note by note" />
-              <span id="spreadLabel" class="readout"></span>
-            </span>
-            <button id="strumBtn" class="btn btn-accent" type="button">Strum</button>
           </div>
         </div>
       </div>
@@ -202,10 +215,10 @@
       </span>
       <span id="beatReadout" class="readout"></span>
 
-      <button id="practiceMore" class="btn btn-quiet practice-more-btn" type="button"
-              aria-expanded="false">Bar, count-in, loop</button>
-
-      <div class="practice-extra" id="practiceExtra" hidden>
+      <!-- Three small choices that were behind a "more" fold. There is
+           room for them on the line they belong to, and a fold over
+           three buttons costs more taps than it saves. -->
+      <div class="practice-extra" id="practiceExtra">
         <div class="select select-compact">
           <select id="meter" aria-label="Time signature" title="Beats to the bar">
             <option value="4">4/4</option>
@@ -219,95 +232,77 @@
       </div>
     </section>
 
-    <!-- ============ PHONE: THE BAR ======================== -->
-    <!-- Five things a player reaches for while playing. Everything else
-         is one tap behind one of them. Hidden outright on a desktop,
-         where all of it is already on screen. -->
-    <nav class="tabbar" id="tabbar" aria-label="Tools" hidden>
-      <button class="tab tab-play" id="tabPlay" type="button">
-        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-          <path d="M4 2.5 L15 9 L4 15.5 Z" fill="currentColor" />
-        </svg>
-        <span class="tab-name" id="tabPlayName">Play</span>
-      </button>
-
-      <button class="tab" id="tabLabels" type="button">
-        <span class="tab-glyph">Aa</span>
-        <span class="tab-name" id="tabLabelsName">Names</span>
-      </button>
-
-      <button class="tab" data-sheet="sheetView" type="button">
-        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-          <g fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M2 2 V16 M6 2 V16 M10 2 V16 M14 2 V16" />
-            <path d="M1 6 H17 M1 11 H17" opacity="0.55" />
-          </g>
-        </svg>
-        <span class="tab-name">Neck</span>
-      </button>
-
-      <button class="tab" data-sheet="sheetPractice" type="button">
-        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-          <circle cx="9" cy="9" r="7" fill="none" stroke="currentColor" stroke-width="1.5" />
-          <path d="M9 5 V9 L12 11" fill="none" stroke="currentColor"
-                stroke-width="1.5" stroke-linecap="round" />
-        </svg>
-        <span class="tab-name">Time</span>
-      </button>
-
-      <button class="tab" data-sheet="sheetSetup" type="button">
-        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-          <circle cx="9" cy="9" r="2.8" fill="none" stroke="currentColor" stroke-width="1.5" />
-          <circle cx="9" cy="9" r="6.6" fill="none" stroke="currentColor"
-                  stroke-width="1.5" stroke-dasharray="2.2 3.4" />
-        </svg>
-        <span class="tab-name">Setup</span>
-      </button>
-    </nav>
-
   </div>
 
-  <!-- ============ PHONE: THE SHEETS ======================= -->
-  <!-- Empty on purpose: ui.js moves the real panels in and out of these
-       as the screen changes size, so there is only ever one of each
-       control and view.js keeps hold of every one of them. -->
-  <div class="scrim" id="scrim" hidden></div>
+  <!-- ============ PHONE: SHEETS AND THE BAR ============= -->
+  <!-- Empty on a desktop, and never shown there. On a phone ui.js moves
+       the controls above into these three drawers — the same elements,
+       still the ones view.js is holding, simply regrouped for a screen
+       that can only show one group at a time. Nothing is duplicated:
+       there is one Metronome button in this document, and it is the one
+       view.js wired up, wherever it happens to be sitting. -->
+  <div class="sheets" id="sheets" hidden>
+    <section class="sheet" id="sheetView" aria-label="View options" hidden>
+      <div class="sheet-head">
+        <span class="sheet-title">View</span>
+        <button class="sheet-close" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="sheet-body" id="sheetViewBody"></div>
+    </section>
 
-  <section class="sheet" id="sheetWhat" hidden aria-label="What is on the neck">
-    <header class="sheet-head">
-      <h2>On the neck</h2>
-      <button class="btn btn-quiet sheet-done" type="button" data-close>Done</button>
-    </header>
-    <div class="sheet-body" id="bodyWhat"></div>
-  </section>
+    <section class="sheet" id="sheetPractice" aria-label="Practice" hidden>
+      <div class="sheet-head">
+        <span class="sheet-title">Practice</span>
+        <button class="sheet-close" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="sheet-body" id="sheetPracticeBody"></div>
+    </section>
 
-  <section class="sheet" id="sheetView" hidden aria-label="The neck">
-    <header class="sheet-head">
-      <h2>The neck</h2>
-      <button class="btn btn-quiet sheet-done" type="button" data-close>Done</button>
-    </header>
-    <div class="sheet-body" id="bodyView"></div>
-  </section>
+    <section class="sheet" id="sheetSetup" aria-label="Setup" hidden>
+      <div class="sheet-head">
+        <span class="sheet-title">Setup</span>
+        <button class="sheet-close" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="sheet-body" id="sheetSetupBody"></div>
+    </section>
+  </div>
 
-  <section class="sheet" id="sheetPractice" hidden aria-label="Practice">
-    <header class="sheet-head">
-      <h2>Practice</h2>
-      <button class="btn btn-quiet sheet-done" type="button" data-close>Done</button>
-    </header>
-    <div class="sheet-body" id="bodyPractice"></div>
-  </section>
+  <!-- The bar the thumb lives on. The wide slot holds whatever playing
+       the board means right now — a run's Play, a grip's Strum — which
+       are the very buttons the desktop foot holds, moved here. -->
+  <nav class="tabbar" id="tabbar" aria-label="Play and panels" hidden>
+    <div class="tabbar-primary" id="tabbarPrimary"></div>
 
-  <section class="sheet" id="sheetSetup" hidden aria-label="Setup">
-    <header class="sheet-head">
-      <h2>Setup</h2>
-      <button class="btn btn-quiet sheet-done" type="button" data-close>Done</button>
-    </header>
-    <div class="sheet-body" id="bodySetup"></div>
-  </section>
+    <button id="tabView" class="btn btn-tab" type="button"
+            aria-expanded="false" aria-controls="sheetView" title="View options">
+      <span aria-hidden="true">Aa</span>
+      <span class="visually-hidden">View options</span>
+    </button>
+
+    <button id="tabPractice" class="btn btn-tab" type="button"
+            aria-expanded="false" aria-controls="sheetPractice" title="Practice">
+      <svg width="19" height="19" viewBox="0 0 20 20" aria-hidden="true">
+        <circle cx="10" cy="10" r="7.6" fill="none" stroke="currentColor" stroke-width="1.7" />
+        <path d="M10 5.4 L10 10 L13.2 11.8" fill="none" stroke="currentColor"
+              stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      <span class="visually-hidden">Practice</span>
+    </button>
+
+    <button id="tabSetup" class="btn btn-tab" type="button"
+            aria-expanded="false" aria-controls="sheetSetup" title="Tuning and strings">
+      <svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="8" cy="8" r="2.6" fill="none" stroke="currentColor" stroke-width="1.6" />
+        <circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.6"
+                stroke-dasharray="2.2 3.4" />
+      </svg>
+      <span class="visually-hidden">Setup</span>
+    </button>
+  </nav>
 
   <script type="module" src="view.js"></script>
   <!-- Chrome only: chips, folds and drawers. It reads and drives the
        controls view.js owns and never touches the board. -->
-  <script src="ui.js?v=3" defer></script>
+  <script src="ui.js" defer></script>
 </body>
 </html>
