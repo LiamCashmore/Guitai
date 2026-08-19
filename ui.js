@@ -225,6 +225,25 @@
     { tab: "tabSetup",    sheet: "sheetSetup",    body: "sheetSetupBody" },
   ];
 
+  // The neck is given the open drawer's room back, so nothing you are
+  // reading ends up behind it. How much room that is, is however tall the
+  // drawer actually came out: View holds four things and Setup holds a
+  // peg per string, and a drawer grows while it is open — Pegs half
+  // again — so it is measured rather than assumed. Guessing high is not
+  // harmless: the padding is what the board scrolls into, and too much
+  // of it lets you scroll the whole neck off the screen.
+  function measureSheet() {
+    const open = SHEETS.map(({ sheet }) => $(sheet))
+      .find(el => el && !el.hasAttribute("hidden"));
+    document.documentElement.style.setProperty(
+      "--sheet-h", open ? `${Math.ceil(open.getBoundingClientRect().height)}px` : "0px");
+  }
+
+  if (window.ResizeObserver) {
+    const watch = new ResizeObserver(measureSheet);
+    SHEETS.forEach(({ sheet }) => { const el = $(sheet); if (el) watch.observe(el); });
+  }
+
   function openSheet(which) {
     let any = false;
     SHEETS.forEach(({ tab, sheet }) => {
@@ -234,18 +253,32 @@
       $(tab)?.setAttribute("aria-expanded", String(on));
       if (on) any = true;
     });
-    // The neck is given the drawer's room back so nothing you are
-    // reading ends up behind it. How much room that is, is however tall
-    // the drawer actually came out — measured rather than assumed, since
-    // View holds four things and Setup holds a peg per string, and
-    // guessing high lets you scroll the whole neck off the screen.
-    const open = which && !$(which)?.hasAttribute("hidden") ? $(which) : null;
-    document.documentElement.style.setProperty(
-      "--sheet-h", open ? `${Math.ceil(open.getBoundingClientRect().height)}px` : "0px");
+    measureSheet();
     document.body.classList.toggle("sheet-open", any);
   }
 
   const closeSheets = () => openSheet(null);
+
+  // ---- Two things to play at once ----------------------------
+  // view.js shows the run's controls where there is a run and the
+  // strum's where there is a grip, and a progression can have both. Four
+  // controls will not sit on one line under a thumb, so the bar is told
+  // when it is carrying both and the stylesheet drops the two that are
+  // adjustments rather than actions.
+  const primary = $("tabbarPrimary");
+  const showing = el => !!el && getComputedStyle(el).display !== "none";
+
+  function syncPrimary() {
+    primary?.classList.toggle(
+      "crowded", showing($("runControls")) && showing($("strumField")));
+  }
+
+  ["runControls", "strumField"].forEach(id => {
+    const el = $(id);
+    if (el) new MutationObserver(syncPrimary)
+      .observe(el, { attributes: true, attributeFilter: ["style", "class"] });
+  });
+  syncPrimary();
 
   SHEETS.forEach(({ tab, sheet }) => {
     $(tab)?.addEventListener("click", () => {
