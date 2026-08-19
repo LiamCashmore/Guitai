@@ -409,6 +409,13 @@ function drawBoard() {
   svg.setAttribute("viewBox", `0 0 ${boardW} ${boardH}`);
   svg.setAttribute("width", boardW);
   svg.setAttribute("height", boardH);
+  // The size it was drawn at, for the stylesheet to scale against. On a
+  // phone the neck is fitted to the screen rather than left at whatever
+  // number the metrics happened to produce — see the note by #board in
+  // styles.css. Unitless, so the rule can use them as a ratio as well as
+  // a length.
+  svg.style.setProperty("--board-w", boardW);
+  svg.style.setProperty("--board-h", boardH);
   svg.innerHTML = "";
 
   const EDGE = L.metrics().EDGE;

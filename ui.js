@@ -235,7 +235,13 @@
       if (on) any = true;
     });
     // The neck is given the drawer's room back so nothing you are
-    // reading ends up behind it.
+    // reading ends up behind it. How much room that is, is however tall
+    // the drawer actually came out — measured rather than assumed, since
+    // View holds four things and Setup holds a peg per string, and
+    // guessing high lets you scroll the whole neck off the screen.
+    const open = which && !$(which)?.hasAttribute("hidden") ? $(which) : null;
+    document.documentElement.style.setProperty(
+      "--sheet-h", open ? `${Math.ceil(open.getBoundingClientRect().height)}px` : "0px");
     document.body.classList.toggle("sheet-open", any);
   }
 

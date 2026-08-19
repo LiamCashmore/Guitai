@@ -904,6 +904,14 @@ input[type="range"]::-moz-range-thumb {
     flex: 1 1 auto;
     min-height: 0;             /* or the board can't give the shell back its overflow */
     max-width: none;
+    /* `margin: 0 auto` is what centres the page on a desktop, and it is
+       also what stops a flex item stretching: an auto margin across the
+       flex axis makes the shell shrink to fit its widest child, which is
+       the board. Left in, the board sets the page's width instead of the
+       page setting the board's, and the fluid rule below has nothing to
+       measure itself against. */
+    width: 100%;
+    margin: 0;
     gap: 0;
     padding: 0;
   }
@@ -1005,16 +1013,48 @@ input[type="range"]::-moz-range-thumb {
   #capoBtn { margin-left: auto; }
   #cagedBtn, #capoBtn { padding-left: 11px; padding-right: 11px; font-size: 11px; }
 
-  /* The one thing on this screen that scrolls. */
+  /* The one thing on this screen that scrolls, and it scrolls one way:
+     down the neck. Across, the board is made to fit — see below. */
   .board-wrap {
     flex: 1 1 auto;
     min-height: 0;
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
     overscroll-behavior: contain;
     padding: 0 0 12px;
     -webkit-overflow-scrolling: touch;
   }
-  #board { margin: 0 auto; }
+
+  /* The neck is drawn at whatever size its own measurements come to —
+     373 across for a guitar, 266 for a bass — and that number has no
+     business deciding how wide the phone is. Left as a fixed width it
+     pushes a 320 or a 360 wider than the screen, and then EVERYTHING is
+     off: the page scrolls sideways, the bar walks off the bottom, and
+     the header is cut in half.
+
+     So the board is told to fill the width it is given and the viewBox
+     does the rest. One uniform scale: frets, markers and their type all
+     keep the proportions they were drawn in, and getScreenCTM — which is
+     how a tap is turned into a fret — reads the scale straight off the
+     element, so nothing about touching it has to know this happened.
+
+     Up to 1.2x and no further. A neck blown up to fill a wide phone
+     shows fewer frets at a time, and past about a fifth over there is
+     less board on the screen than there was room for. Narrow instruments
+     therefore sit centred rather than stretched, which is also how they
+     are: a bass neck is not as wide as a guitar's.
+
+     --board-w / --board-h are set by view.js each time the board is
+     drawn, so a change of instrument or of orientation brings them with
+     it. The aspect-ratio is the same pair, which spares us `height:auto`
+     on an SVG — a corner some browsers have been shaky about. */
+  #board {
+    width: 100%;
+    max-width: calc(var(--board-w, 373) * 1.2px);
+    height: auto;
+    aspect-ratio: var(--board-w, 373) / var(--board-h, 912);
+    margin: 0 auto;
+  }
 
   /* The foot's contents have gone to the bar and the View drawer. */
   .board-foot,
@@ -1063,13 +1103,23 @@ input[type="range"]::-moz-range-thumb {
     cursor: pointer;
   }
   .sheet-body { display: flex; flex-direction: column; gap: 11px; }
+  /* Each control is as tall as it is. Several of these carry a `flex`
+     from the card they came out of — #progEdit's is `1 1 220px` — and in
+     a column that reads as "stretch", which leaves a text box with a
+     hand's depth of empty drawer hanging off the bottom of it. */
+  .sheet-body > * { flex: none; }
   .sheet-body .cluster,
   .sheet-body .field { width: 100%; }
-  /* The instrument menu is sized to its own text in the masthead; in a
-     drawer it has a column to itself, so it takes it — otherwise the
-     chevron is left stranded at the far edge of a short box. */
-  .sheet-body .select-compact { width: 100%; }
-  .sheet-body .select-compact select { min-width: 0; }
+  /* The instrument and tuning menus are sized to their own text in the
+     masthead; in a drawer they have a column to themselves, so they take
+     it. The box has to be told as well as its wrapper — .select-compact
+     pins the box to its text and leaves the wrapper, and so the chevron,
+     out at the far edge with nothing under it. */
+  .sheet-body .select { width: 100%; min-width: 0; }
+  .sheet-body .select select { width: 100%; min-width: 0; }
+  /* Except where a button belongs on the line too: then the menu takes
+     what is left of it rather than pushing the button onto its own row. */
+  .sheet-body .cluster > .select { flex: 1 1 auto; width: auto; }
   .sheet-body .btn-labels { margin-left: 0; }
   .sheet-body .slider { width: 100%; }
   .sheet-body .slider input[type="range"] { flex: 1 1 auto; width: auto; min-width: 0; }
@@ -1143,7 +1193,7 @@ input[type="range"]::-moz-range-thumb {
    you are reading are never behind the thing you just opened. */
 @media (max-width: 720px) {
   body.sheet-open .board-wrap {
-    padding-bottom: calc(78px + 58vh + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(78px + var(--sheet-h, 58vh) + env(safe-area-inset-bottom, 0px));
   }
 }
 
