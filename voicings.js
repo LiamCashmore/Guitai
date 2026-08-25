@@ -122,6 +122,30 @@ export function shellRequirements(degrees, type) {
 }
 
 /**
+ * The chord reduced to the tones that ARE the chord — its shell.
+ *
+ * Root, the tone that says major or minor, the seventh, and any bent
+ * fifth the chord is named for. Nothing else: the perfect fifth goes,
+ * and so does every extension. Three notes, usually, sometimes four,
+ * and it is what a guitarist plays behind a soloist — the fifth doubles
+ * what the bass is already saying and the extensions are the soloist's
+ * to choose, so leaving both out is not a compromise, it is the point.
+ *
+ * shellRequirements answers a different question with nearly the same
+ * words: it is the least a grip may get away with when the neck has no
+ * room for the whole chord, so it keeps the anyOf groups (a grip there
+ * may still sound an alteration) and lets the root go on dense chords
+ * where four fingers cannot hold it. A shell voicing is a choice rather
+ * than a concession: the root is the bottom of it and nothing outside
+ * the list is allowed in.
+ */
+export function shellDegrees(degrees, type) {
+  const wanted = new Set(shellRequirements(degrees, type).required);
+  wanted.add("1");                       // a shell is built up from the root
+  return wanted;
+}
+
+/**
  * The tones a grip was asked for and hasn't got, in the order the chord
  * names them. The root is never on the list: a grip without one is
  * labelled rootless already, and saying both is saying it twice.
@@ -727,6 +751,145 @@ function voicingEase(voicing, degrees, type) {
   return { score, shape };
 }
 
+// The same table as a number, so a list of grips can be walked in the
+// order a player would name them: root position first, then up through
+// the inversions. Read off the names rather than written out again, so
+// there is one statement of which bass note makes which inversion and
+// not two of them drifting apart.
+const INVERSION_RANK = Object.fromEntries(
+  Object.entries(INVERSION).map(([degree, name]) =>
+    [degree, name === "root position" ? 0 : parseInt(name, 10)]));
+const UNNAMED_RANK  = 4;   // a bass the table doesn't cover
+const ROOTLESS_RANK = 5;   // no root sounding: not an inversion of anything
+
+function inversionRank(v) {
+  if (!v.notes.some(n => n.degree === "1")) return ROOTLESS_RANK;
+  return INVERSION_RANK[v.bass] ?? UNNAMED_RANK;
+}
+
+// Where each tone belongs in a stack, counted the way a chord is spelled
+// rather than the way a scale is. The degree tables list a chord's tones
+// in ascending pitch inside one octave — Add9 is written 1, 9, 3, 5 —
+// but a stack is built in thirds and puts the 9th on top, so the number
+// in the name is what orders it. Sus chords keep their 2 and 4 where
+// they are: those replace the third rather than colouring the chord, and
+// they are voiced low, next to the root.
+const STACK_NUMBER = {
+  "1": 1, "b2": 9, "2": 2, "b3": 3, "3": 3, "4": 4, "#4": 11,
+  "b5": 5, "5": 5, "#5": 5, "b6": 13, "6": 6, "bb7": 7, "b7": 7, "7": 7,
+  "b9": 9, "9": 9, "#9": 9, "11": 11, "#11": 11, "b13": 13, "13": 13,
+};
+const stackNumber = d =>
+  STACK_NUMBER[d] ?? (parseInt(d.replace(/^[#b]+/, ""), 10) || 99);
+
+/**
+ * How far this grip is from being the chord stacked in order.
+ *
+ * A stacked grip climbs the chord as it climbs the strings — root, third,
+ * fifth, seventh — and starts again at the root when it runs out of
+ * chord. That is the shape that shows a player what the chord IS, so it
+ * is the one to lead with; a grip that jumps about spells the same notes
+ * but teaches nothing about how they are built.
+ *
+ * Counted as the number of places the climb breaks, so an unbroken stack
+ * is zero and everything else is worse by how scrambled it is. A doubled
+ * tone is a break like any other, which is right: the octave of the root
+ * on top of a stack is where the stack begins again.
+ */
+function stackBreaks(v) {
+  const order = [...new Set(v.notes.map(n => n.degree))]
+    .sort((a, b) => stackNumber(a) - stackNumber(b));
+  const idx = new Map(order.map((d, i) => [d, i]));
+  const n = order.length;
+  if (n < 2) return 0;
+
+  const climbing = v.cells
+    .map((c, i) => ({ pitch: pitchAt(c), degree: v.notes[i].degree }))
+    .sort((a, b) => a.pitch - b.pitch)
+    .map(x => idx.get(x.degree));
+
+  let breaks = 0;
+  for (let k = 1; k < climbing.length; k++) {
+    if ((climbing[k - 1] + 1) % n !== climbing[k]) breaks++;
+  }
+  return breaks;
+}
+
+// What a broken stack is worth against the ease of the grip. Small on
+// purpose: it decides between grips a hand takes about equally, and
+// never asks anyone to play something harder for the sake of tidiness.
+const STACK_COST = 0.9;
+
+/**
+ * The few grips to show, arranged the way a player would be taught them.
+ *
+ * The list arrives ordered by how the hand takes it, which is the right
+ * order for one grip and the wrong one for four: it fills the arrows with
+ * whichever inversion happened to fall easiest, so a C7 in open position
+ * came up three times over with a Bb underneath it and the player never
+ * saw the chord in root position at all.
+ *
+ * So the classes take turns. Root position leads — that is the chord
+ * saying its own name — and then the inversions come round in order, one
+ * apiece, before any class is offered a second grip. Within a class the
+ * easiest leads, with the grip that stacks the chord in order preferred
+ * between grips of about equal ease.
+ */
+function byInversion(kept, type, limit) {
+  // Not every grip in the list is necessarily the same chord. Where the
+  // neck can hold the whole thing they all are, and this says nothing;
+  // where it can't, the list is fragments, and a G major without its
+  // third is not an inversion to be shown in turn — it is a worse answer
+  // to the same question, and a G5 by ear.
+  //
+  // Which is what keeps root position from being promoted into something
+  // misleading. Putting the root underneath is worth a harder hand, and
+  // that is the whole point of the arrangement, but it is not worth the
+  // third — and the one stretch of neck where the root-position grip is
+  // the one missing it is exactly where it would otherwise be pushed to
+  // the front.
+  //
+  // Only the third is protected this way, not every tone a grip has had
+  // to let go. A bass leaves something out of nearly every chord it
+  // plays — two or three strings for a five-note chord — so a rule about
+  // omissions in general would fire constantly there and quietly undo
+  // the arrangement on the one instrument that most wants its root at
+  // the bottom.
+  const QUALITY = new Set(["3", "b3", "2", "4"]);
+  const quality = getScaleDegrees(type).find(d => QUALITY.has(d));
+  const says = v => !quality || v.notes.some(n => n.degree === quality);
+  // Unless none of them does, in which case there is nothing to prefer
+  // and the whole list takes turns as it stands.
+  const speaks = kept.filter(says);
+  const rest   = speaks.length ? kept.filter(v => !says(v)) : [];
+  if (!speaks.length) speaks.push(...kept);
+
+  const buckets = Array.from({ length: ROOTLESS_RANK + 1 }, () => []);
+  for (const v of speaks) buckets[inversionRank(v)].push(v);
+  for (const bucket of buckets) {
+    for (const v of bucket) v.stack = stackBreaks(v);
+    bucket.sort((a, b) =>
+      (a.ease + a.stack * STACK_COST) - (b.ease + b.stack * STACK_COST));
+  }
+
+  const out = [];
+  for (let round = 0; out.length < limit; round++) {
+    let any = false;
+    for (const bucket of buckets) {
+      if (bucket.length <= round) continue;
+      out.push(bucket[round]);
+      any = true;
+      if (out.length >= limit) break;
+    }
+    if (!any) break;
+  }
+  for (const v of rest) {
+    if (out.length >= limit) break;
+    out.push(v);
+  }
+  return out;
+}
+
 /**
  * Whittle a list of grips down to the few worth showing.
  *
@@ -735,7 +898,7 @@ function voicingEase(voicing, degrees, type) {
  * matter, so the list is cut to the easiest few — and two grips differing
  * by one doubled note are not two grips, so the near-duplicates go first.
  */
-export function rankVoicings(list, type, { limit = 4 } = {}) {
+export function rankVoicings(list, type, { limit = 4, order = "ease" } = {}) {
   const degrees = getScaleDegrees(type);
   const onBass  = instrument.chords.strategy === "bass";
   const scored = list.map(v => {
@@ -767,19 +930,58 @@ export function rankVoicings(list, type, { limit = 4 } = {}) {
     return true;
   };
 
+  // A family of grips is worth one place in the list, and the member that
+  // takes it is the FULLEST of them — the whole hand, with everything it
+  // holds sounding. Which member arrives first is a question about the
+  // ease score and not about the chord: x3x000 is a shade easier than
+  // x32000 because it asks for one finger instead of two, so it was
+  // arriving first and swallowing the open C major 7 everyone is taught,
+  // third and all. The same thing happened to open C7, and to every other
+  // shape whose canonical form doubles a tone: the note was there in the
+  // search, ranked, and then quietly deleted for being the fuller answer.
+  //
+  // So a shadow no longer throws a grip away in whichever direction it
+  // happens to point. The family keeps the rank its best member earned,
+  // and shows the fullest member at it.
   const kept = [];
   const keptMaps = [];
+  // Room for more families than will be shown, because the arrangement
+  // below picks across inversions rather than straight down the list.
+  const room = order === "ease" ? limit : Math.max(limit * 8, 24);
+  let reserved = false;   // is a root-position grip on the list yet?
   for (const v of scored) {
     const mine = fingersOf(v);
-    const shadowed = kept.some((k, i) =>
+    const at = kept.findIndex((k, i) =>
       k.bass === v.bass &&
       (contains(keptMaps[i], mine) || contains(mine, keptMaps[i])));
-    if (shadowed) continue;
+    if (at >= 0) {
+      if (mine.size > keptMaps[at].size) { kept[at] = v; keptMaps[at] = mine; }
+      continue;
+    }
+    // Full up. The scan carries on anyway, so a family already on the
+    // list can still be filled out by a later, fuller member of itself —
+    // and so that the one grip the arrangement below promises is always
+    // there to promote.
+    if (kept.length >= room) {
+      // Root position can rank a long way down when the chord is bigger
+      // than the neck: an F#maj13 on a mandolin has eighty-odd families
+      // in a five-fret window and the first with the root underneath is
+      // the sixtieth of them. Cutting the list before reaching it means
+      // the arrangement has nothing to lead with, so the best one is
+      // held onto whatever its rank. Whether it actually leads is then
+      // byInversion's call, and it will not if it is the thinner answer.
+      if (order === "inversion" && !reserved && inversionRank(v) === 0) {
+        reserved = true;
+        kept.push(v);
+        keptMaps.push(mine);
+      }
+      continue;
+    }
+    if (inversionRank(v) === 0) reserved = true;
     kept.push(v);
     keptMaps.push(mine);
-    if (kept.length >= limit) break;
   }
-  return kept;
+  return order === "inversion" ? byInversion(kept, type, limit) : kept.slice(0, limit);
 }
 
 /**
@@ -1003,6 +1205,137 @@ function fullVoicings(root, type, { openAnywhere = false, relaxed = false } = {}
     (a.bass === "1" ? 0 : 1) - (b.bass === "1" ? 0 : 1) ||
     b.cells.length - a.cells.length ||
     a.fingers - b.fingers || a.span - b.span);
+}
+
+/**
+ * The chord's shell voicings: one string per defining tone, nothing else.
+ *
+ * A different question from the one fullVoicings asks, and it wants a
+ * different search rather than a filter over that one. The full search
+ * fills every string in a run and doubles freely, which is what makes an
+ * open or a barre chord; a shell is the opposite idea — three notes, one
+ * apiece, the fifth and the extensions deliberately gone — and asking
+ * the full search for them and throwing away the rest would spend a walk
+ * of the whole neck to discard almost all of it.
+ *
+ * The string sets are the two a hand can actually mute: a run of
+ * neighbours, or a run with the string just above the bass skipped,
+ * which is how the shell with its root on the 6th string is played —
+ * the finger on the root leans against the 5th and silences it. That
+ * skip is the whole reason these shapes exist at the bottom of the neck,
+ * so it is not an extra here the way it is in the full search.
+ *
+ * The voices climb as they cross the strings, which is what keeps the
+ * result a stack and not a scramble of the same three notes.
+ *
+ * @returns {Array<{cells, notes, lo, hi, strings, order, label, omits}>}
+ */
+export function shellVoicings(root, type, { openAnywhere = false } = {}) {
+  const grid    = buildScaleGrid(root, type);
+  const degrees = getScaleDegrees(type);
+  const wanted  = shellDegrees(degrees, type);
+  const strict  = chordRequirements(degrees, type);
+  const size    = wanted.size;
+  if (size > numStrings) return [];
+
+  // Where each shell tone falls on each string, and nowhere else — a
+  // grip here may not sound a fifth or a ninth even where one is under
+  // the hand, because that is what makes it a shell.
+  const options = [];
+  for (let s = 0; s < numStrings; s++) {
+    const frets = [];
+    for (let f = 0; f <= numFrets; f++) {
+      const note = grid[s][f];
+      if (note && wanted.has(note.degree)) frets.push(f);
+    }
+    options.push(frets);
+  }
+
+  const sets = [];
+  for (let first = 0; first + size - 1 < numStrings; first++) {
+    sets.push(Array.from({ length: size }, (_, i) => first + i));
+  }
+  for (let first = 0; first + size < numStrings; first++) {
+    sets.push([first, ...Array.from({ length: size - 1 }, (_, i) => first + 2 + i)]);
+  }
+
+  const out = [];
+  const seen = new Set();
+  const openCap = openAnywhere ? chordSpan() : chordOpenSpan();
+
+  for (const strings of sets) {
+    if (strings.some(s => options[s].length === 0)) continue;
+    // A skipped string is silenced by the finger on the bass note lying
+    // against it, and an open bass has no finger on it to do that with.
+    const gapped = strings.at(-1) - strings[0] + 1 > strings.length;
+    const chosen = [];
+
+    (function choose(i) {
+      if (i === strings.length) {
+        const cells = strings.map((string, k) => ({ string, fret: chosen[k] }));
+        if (gapped && cells[0].fret === 0) return;
+
+        const notes = cells.map(c => grid[c.string][c.fret]);
+        // Every shell tone once, and only shell tones — the options above
+        // settle the second half, this settles the first.
+        if (new Set(notes.map(n => n.degree)).size !== size) return;
+
+        // Rising across the strings, so the grip is a stack.
+        const pitches = cells.map(pitchAt);
+        for (let k = 1; k < size; k++) if (pitches[k] <= pitches[k - 1]) return;
+
+        const stopped = cells.map(c => c.fret).filter(f => f > 0);
+        if (!stopped.length) return;                 // all open is not a grip
+        const loF = Math.min(...stopped), hiF = Math.max(...stopped);
+        const span = hiF - loF + 1;
+        if (span > chordSpan()) return;
+        if (handReach(cells) > instrument.chords.reach.max) return;
+        // An open string belongs to the nut — or to the capo, which is
+        // the nut now — so a grip letting one ring stays tight around it
+        // unless open strings were asked for outright.
+        const reachesForOpen =
+          cells.some(c => c.fret === 0 && !droneStrings.has(c.string));
+        if (reachesForOpen && span > openCap) return;
+        if (cells.some(c => c.fret === 0) &&
+            hiF - capoFret > instrument.chords.openReach) return;
+
+        const grip = gripFingering(cells);
+        if (!grip) return;
+        const key = gripKey(cells);
+        if (seen.has(key)) return;
+        seen.add(key);
+
+        const lowest  = lowestCell(cells);
+        const bass    = grid[lowest.string][lowest.fret].degree;
+        const sounded = new Set(notes.map(n => n.degree));
+        out.push({
+          cells, notes, strings, span,
+          stretch: isStretch(cells, span),
+          lo: loF, hi: hiF,
+          fingers: grip.fingers,
+          barre: grip.barre,
+          barres: grip.barres,
+          order: notes.map(n => n.degree).join("-"),
+          bass,
+          // The fifth is gone by choice and goes unremarked; a tone the
+          // chord is actually named for — the 13th of a 13 chord — is
+          // worth saying out loud, because the shell is standing in for
+          // a chord it is not completely sounding.
+          omits: missingFrom(strict.required, sounded, degrees),
+          label: labelFor(notes, bass),
+          shell: true,
+        });
+        return;
+      }
+      for (const f of options[strings[i]]) { chosen[i] = f; choose(i + 1); }
+    })(0);
+  }
+
+  // Up the neck; at the same fret, root position leads.
+  return out.sort((a, b) =>
+    a.lo - b.lo ||
+    (a.bass === "1" ? 0 : 1) - (b.bass === "1" ? 0 : 1) ||
+    a.span - b.span || a.strings[0] - b.strings[0]);
 }
 
 /**

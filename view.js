@@ -64,6 +64,7 @@ import {
   customProgressionKey,
   CUSTOM_PROGRESSION,
   hasOpenVoicing,
+  shellVoicings,
   gripFingering,
 } from "./music.js";
 
@@ -298,6 +299,18 @@ let ghostCells = new Set();
 // neck comes up first. On, any open chord tone may ring under a grip
 // wherever the hand happens to be.
 let openOn = false;
+
+// Shell voicings. Off, the board offers the full grips — every string in
+// the hand sounding, notes doubled, which is what the open and barre
+// shapes are made of. On, it offers the other thing a guitarist plays:
+// root, third and seventh, one string apiece, with the fifth and the
+// extensions deliberately left out for the bass and the soloist.
+//
+// A switch rather than more entries in the same list of four, because
+// they are two different answers to the chord and interleaving them
+// leaves too few of each to be worth stepping through.
+let shellOn = false;
+const shellsOffered = () => !!instrument.chords.shell;
 
 // Path mode. Not a setting any more: a scale or an arpeggio is something
 // you travel through, so picking a start and a target is simply what the
@@ -2595,17 +2608,22 @@ function toggleGripNote(pos) {
  * for an answer that never changes. Only one chord is on screen at a
  * time, so remembering the last one is enough.
  */
-let voicingCache = { key: null, whole: null, shell: null };
-function voicingsFor(root, type, openAnywhere, { relaxed = false } = {}) {
+let voicingCache = { key: null, whole: null, thinned: null, shells: null };
+function voicingsFor(root, type, openAnywhere, { relaxed = false, shell = false } = {}) {
   // The capo is part of the question: it changes what every string can
   // sound, so grips found under one are not answers about another.
   const key = `${root}|${type}|${openAnywhere}|${neckKey()}`;
-  if (voicingCache.key !== key) voicingCache = { key, whole: null, shell: null };
-  const slot = relaxed ? "shell" : "whole";
-  // The shell search is a second walk of the whole neck, so it is only
-  // paid for when a window turns out to need it — which for most chords
-  // is never.
-  voicingCache[slot] ??= chordVoicings(root, type, { stacked: false, openAnywhere, relaxed });
+  if (voicingCache.key !== key) {
+    voicingCache = { key, whole: null, thinned: null, shells: null };
+  }
+  const slot = shell ? "shells" : relaxed ? "thinned" : "whole";
+  // Each of these is a walk of the whole neck, so it is only paid for
+  // when something asks — the thinned search when a window turns out to
+  // hold no complete grip, which for most chords is never, and the shell
+  // search only while the button is down.
+  voicingCache[slot] ??= shell
+    ? shellVoicings(root, type, { openAnywhere })
+    : chordVoicings(root, type, { stacked: false, openAnywhere, relaxed });
   return voicingCache[slot];
 }
 
@@ -2807,7 +2825,8 @@ function render({ animate = true } = {}) {
     // the open and barre shapes a guitarist actually plays are made of.
     // On a bass this is the bass search instead — a different set of
     // rules producing the same kind of answer.
-    const all = voicingsFor(root, type, openOn);
+    const shellMode = shellOn && shellsOffered();
+    const all = voicingsFor(root, type, openOn, { shell: shellMode });
     // Coming from a scale, the window opens where the hand was left — or
     // at the nearest stretch of neck that can actually hold the chord.
     if (seekAnchor) {
@@ -2820,6 +2839,16 @@ function render({ animate = true } = {}) {
     // gripFitsWindow for what that means and what escapes it.
     {
       let inWindow = all.filter(v => gripFitsWindow(v, winLo, winHi));
+      // A shell wants three or four strings each carrying a different
+      // one of the chord's own tones, rising as they go, and a stretch
+      // of neck does not always have them — the tones are simply not all
+      // reachable at once there. Rather than leave the board blank, the
+      // full grips answer instead. The button stays down: move the hand
+      // and the shells come back on their own.
+      if (!inWindow.length && shellMode) {
+        inWindow = voicingsFor(root, type, openOn)
+          .filter(v => gripFitsWindow(v, winLo, winHi));
+      }
       // Nothing fits. That is almost never the truth about the neck —
       // the tones are simply not all reachable at once here. A banjo's
       // G13 between frets 4 and 8 has its seventh and its thirteenth on
@@ -2847,7 +2876,12 @@ function render({ animate = true } = {}) {
       // root in the bass, how much of the chord is sounding — and cut
       // there. Cycling through every doubling of every inversion buries
       // the grips that matter.
-      voicings = rankVoicings(inWindow, type, { limit: GRIPS_SHOWN });
+      // Root position leads, then the inversions come round in order —
+      // see byInversion. A player asking how to play a C7 wants the C
+      // underneath it first, and then wants to be shown the other three
+      // places it can sit, not four ways of holding the same one.
+      voicings = rankVoicings(inWindow, type,
+        { limit: GRIPS_SHOWN, order: "inversion" });
     }
 
     let grid = buildScaleGrid(root, type);
@@ -3129,6 +3163,20 @@ function syncCagedControls() {
     : openOn
       ? "Open strings may ring under a grip anywhere on the neck"
       : "Open strings only where the window reaches the nut";
+
+  // Shells, where the instrument has them. The whole point is that they
+  // are a different set of grips from the full shapes, so the button says
+  // which of the two is on the board rather than acting as a filter over
+  // one list.
+  const shellField = document.getElementById("shellField");
+  const shellBtn   = document.getElementById("shellBtn");
+  const canShell   = chords && shellsOffered();
+  if (!canShell) shellOn = false;
+  shellField.style.display = canShell ? "flex" : "none";
+  shellBtn.classList.toggle("active", shellOn);
+  shellBtn.title = shellOn
+    ? "Showing shells — root, third and seventh, with the fifth left out"
+    : "Show shell voicings: root, third and seventh, one string apiece";
 
   // The legend names what is actually on the board, and says what the
   // board does when you touch it — which is a different thing in each
@@ -3460,6 +3508,14 @@ function initControls() {
   document.getElementById("openBtn").addEventListener("click", () => {
     openOn = !openOn;
     posIndex = 0;   // a different set of grips — start at the top of it
+    syncCagedControls();
+    render();
+  });
+
+  document.getElementById("shellBtn").addEventListener("click", () => {
+    shellOn = !shellOn;
+    posIndex = 0;   // another set of grips again — start at the top of it
+    gripEdit = null;   // the edited grip is not one of these
     syncCagedControls();
     render();
   });

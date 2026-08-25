@@ -323,7 +323,7 @@
       // colours mean — everything about looking at it rather than
       // playing it.
       borrow($("sheetViewBody"), ["#labelsBtn"]);
-      pair($("sheetViewBody"), ["#ghostField", "#openField"]);
+      pair($("sheetViewBody"), ["#ghostField", "#openField", "#shellField"]);
       borrow($("sheetViewBody"), ["#progEdit", ".board-foot .legend"]);
 
       // Tempo, and the bar it is counted in.

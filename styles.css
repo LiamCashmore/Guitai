@@ -1010,6 +1010,7 @@ input[type="range"]::-moz-range-thumb {
      rather than change what it is looking at. */
   .board-tools .btn-labels,
   .board-tools #ghostField,
+  .board-tools #shellField,
   .board-tools #openField { display: none !important; }
 
   #cagedNav { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; }

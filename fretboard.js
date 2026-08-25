@@ -68,6 +68,14 @@ export const INSTRUMENTS = {
     kinds: ["scale", "arpeggio", "chord", "progression"],
     chords: {
       strategy: "guitar",
+      // Shell voicings are offered here and nowhere else for now. The
+      // idea is a guitarist's — drop the fifth, drop the extensions,
+      // keep root, third and seventh, and let the bass and the soloist
+      // have the rest — and it needs six strings and a hand that can
+      // skip one of them to be worth doing. Whether it says anything
+      // useful on a mandolin's fifths or a banjo's four strings is a
+      // separate question, so those stay off until it is answered.
+      shell: true,
       scaleLength: 25.5,
       // The guitar's grips are governed by the fret counts below, tuned
       // by hand, so no physical cap binds here. The bass entry says why
