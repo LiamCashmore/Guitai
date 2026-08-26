@@ -335,12 +335,12 @@ function reachCost(a, b, gap) {
   return null;                      // wider than the hand opens
 }
 
-// What moving the hand costs, weighed against the stretches it saves. A
-// shift is cheap — one motion, between two notes — but not free, or the
-// hand would rearrange itself on every string it touched. Arriving
-// anywhere but with the index on the note it came for is not a shift at
-// all; it is a creep, and nobody plays that way. It is priced rather than
-// forbidden only because a hand with nowhere else to go needs somewhere.
+// What moving the hand costs, weighed against the openings it saves. A
+// shift is one motion between two notes and cheap, but not free, or the
+// hand would relocate on every string it touched. Arriving anywhere but
+// with the index on the note it came for is not a shift at all; it is a
+// creep, and nobody plays that way. It is priced rather than forbidden
+// only because a hand with nowhere else to go needs somewhere.
 const SHIFT_COST = 1;
 const CREEP_COST = 4;
 
@@ -349,15 +349,19 @@ const CREEP_COST = 4;
  * cannot hold them.
  *
  * Every way the four fingers could take them is tried, and the one that
- * asks least of the hand wins — where what the hand is asked includes
- * being asked to move, so that staying put and stretching and shifting
- * are all priced in the same coin and the cheapest of them wins.
+ * asks least of the hand wins — where what the hand is asked includes the
+ * opening between the index, which is where the hand is standing, and
+ * whichever finger these notes start on. So staying put, opening up and
+ * moving are all priced in the one coin and the cheapest wins.
  *
- * That is what puts the middle finger rather than the index on a string
- * whose lowest note happens to sit a fret above the position: the hand is
- * already there and nothing is gained by moving it. It is equally what
- * moves the hand a fret up rather than opening the little finger away
- * from the ring to save the trip.
+ * That opening is what settles the strings a scale barely asks about and
+ * an arpeggio asks about constantly: the ones carrying a single note. A
+ * note four frets above the index is the little finger reaching for it —
+ * the hand is already there — and only a note the hand cannot reach at
+ * all is worth moving for. Reading the hand's place off that one note
+ * instead, as though the finger on it had to be the index, is what used
+ * to send the hand chasing up the neck and back for two notes it could
+ * have played standing still.
  *
  * A hand that does move arrives with its index on the note it came for.
  * Creeping up by the fewest frets that would reach is cheaper to work out
@@ -366,7 +370,8 @@ const CREEP_COST = 4;
  * could make.
  *
  * @param {number[]} frets  ascending
- * @param {number} at  the fret the index is standing on
+ * @param {number} at  the fret the index is standing on, or null where the
+ *        hand is known to be moving whatever it does — see runFingering
  */
 function layOnString(frets, at) {
   const first = frets[0];
@@ -378,28 +383,33 @@ function layOnString(frets, at) {
 
   let best = null;
   for (const fingers of FINGER_SETS.get(frets.length) ?? []) {
-    let cost = 0;
+    // What these fingers have to do between themselves.
+    let body = 0;
     for (let i = 1; i < frets.length; i++) {
       const step = reachCost(fingers[i - 1], fingers[i], frets[i] - frets[i - 1]);
-      if (step === null) { cost = null; break; }
-      cost += step;
+      if (step === null) { body = null; break; }
+      body += step;
     }
-    if (cost === null) continue;
-    // Where this hand is standing, read off the finger on the lowest note.
-    const base = first - (fingers[0] - 1);
-    const rank = base === at ? 0 : fingers[0] === 1 ? 1 : 2;
-    const total = cost + [0, SHIFT_COST, CREEP_COST][rank];
+    if (body === null) continue;
+
+    // And what the hand has to open to reach the first of them from where
+    // it stands. Null when it cannot, which is to say that playing the
+    // string this way means moving.
+    const head = at === null ? null : reachCost(1, fingers[0], first - at);
+    const stays = head !== null;
+    const total = stays ? head + body
+                        : body + (fingers[0] === 1 ? SHIFT_COST : CREEP_COST);
     // Ties go to the hand that stays where it is: given two ways of
     // playing the string that cost the same, a player doesn't move.
-    if (!best || total < best.total || (total === best.total && rank < best.rank)) {
-      best = { fingers, rank, total, base };
+    if (!best || total < best.total || (total === best.total && stays && !best.stays)) {
+      best = { fingers, total, stays };
     }
   }
   if (!best) return null;
 
   const laid = new Map();
   frets.forEach((f, i) => laid.set(f, best.fingers[i]));
-  return { fingers: laid, at: best.base };
+  return { fingers: laid, at: best.stays ? at : first - (best.fingers[0] - 1) };
 }
 
 /**
@@ -469,15 +479,26 @@ export function runFingering(cells) {
   if (!strings.size) return out;
 
   // Where the hand starts: under the lowest note the run asks for, which
-  // is where a player's index goes before playing any of it.
+  // is where a player's index goes before playing any of it — including
+  // when that note is on a string the run reaches later, since the hand
+  // is going to have to be there for it either way.
+  // The index goes on the lowest note the run asks for before a note of
+  // it is played — including when that note is on a string the run
+  // reaches later, since the hand has to be there for it either way.
   let at = Math.min(...[...strings.values()].flatMap(set => [...set]));
 
   for (const [string, set] of strings) {
-    for (const hand of splitForHand([...set].sort((a, b) => a - b))) {
-      const laid = layOnString(hand, at);
+    const groups = splitForHand([...set].sort((a, b) => a - b));
+    groups.forEach((group, i) => {
+      // A string in two hands is a string the hand moved along, and it
+      // moved because no one hand could hold all of it — that is the only
+      // reason splitForHand ever cuts. So the second hand is not asked
+      // whether it would rather stay: it can't have, and a fingering that
+      // read as though it had would read as a stretch nobody can make.
+      const laid = layOnString(group, i ? null : at);
       at = laid.at;
       for (const [fret, finger] of laid.fingers) out.set(`${string}:${fret}`, finger);
-    }
+    });
   }
   return out;
 }
