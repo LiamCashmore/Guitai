@@ -903,6 +903,17 @@ input[type="range"]::-moz-range-thumb {
   .masthead h1 { font-size: 22px; }
   .masthead p { display: none; }
 
+  /* Choosers folded: nothing above the neck is being read any more, so
+     the header stops being a masthead and becomes a strip with a way
+     back into it. The sunmark and the wordmark come down together —
+     they are the tallest things in the row — and the two buttons keep a
+     size a thumb can still find, since the chevron is the way back.
+     Sixty-nine pixels to fifty-two, which is most of a fret. */
+  .choosers-folded .masthead { padding: 6px 12px; gap: 9px; }
+  .choosers-folded .sunmark { width: 32px; height: 32px; }
+  .choosers-folded .masthead h1 { font-size: 18px; }
+  .choosers-folded .masthead-tools button { min-height: 40px; }
+
   .masthead-tools { gap: 7px; margin-left: auto; }
   .theme-toggle { gap: 0; padding: 9px 11px; }
   .theme-toggle .label { display: none; }
@@ -977,7 +988,9 @@ input[type="range"]::-moz-range-thumb {
     flex: none;
     flex-wrap: nowrap;
     gap: 8px;
-    padding: 8px 12px;
+    /* One row holding one stepper, so the padding is the only thing
+       standing between the choosers and the nut. */
+    padding: 4px 12px;
     background: var(--bg);
   }
   .board-tools > * { flex: none; }
@@ -1004,6 +1017,10 @@ input[type="range"]::-moz-range-thumb {
   /* ...and with nothing to step between there is nothing in it at all,
      so the band goes rather than sitting empty over the nut. */
   .board-tools.tools-bare { display: none; }
+  /* The arrows keep the full 44 across — they are wide buttons with a
+     small mark in them — and give up four pixels of height, which is
+     four pixels of neck and no harder to hit. */
+  .board-tools .btn-icon { min-height: 40px; }
 
   /* Positions and Capo, down in the choosers, sharing the line. */
   .what-hand { gap: 8px; }
@@ -1152,7 +1169,7 @@ input[type="range"]::-moz-range-thumb {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 9px 12px calc(9px + env(safe-area-inset-bottom, 0px));
+    padding: 6px 12px calc(6px + env(safe-area-inset-bottom, 0px));
     background: var(--surface);
     border-top: 1px solid var(--line);
   }
@@ -1171,7 +1188,7 @@ input[type="range"]::-moz-range-thumb {
     flex: 1 1 auto;
     justify-content: center;
     min-width: 0;
-    min-height: 48px;
+    min-height: 46px;
   }
   .tabbar-primary .btn-quiet { flex: 0 1 auto; min-width: 0; }
 
@@ -1192,15 +1209,17 @@ input[type="range"]::-moz-range-thumb {
     align-items: center;
     justify-content: center;
     width: 48px;
-    min-height: 48px;
+    min-height: 46px;
     padding: 0;
     font-size: 13px;
     font-weight: 700;
   }
 
   /* The board is behind the bar and the drawers, so it is given room to
-     scroll past them rather than ending underneath. */
-  .board-wrap { padding-bottom: calc(78px + env(safe-area-inset-bottom, 0px)); }
+     scroll past them rather than ending underneath. Kept to what the bar
+     actually stands at — it was set when the bar was taller, and the
+     difference was dead space under the last fret. */
+  .board-wrap { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
 
   /* ---- Fingers, not pointers ---- */
   button, select { min-height: 44px; }

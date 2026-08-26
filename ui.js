@@ -140,6 +140,12 @@
     whatPanel.toggleAttribute("hidden", folded);
     foldBtn.setAttribute("aria-expanded", String(!folded));
     foldBtn.classList.toggle("folded", folded);
+    // Folded is a different mode of using the thing, not just the same
+    // screen with a panel missing: the choosing is done and what is left
+    // is playing. The stylesheet reads this to pull the masthead in —
+    // see .choosers-folded in the phone block — so the neck gets the
+    // room the wordmark was holding as well as the room the panel was.
+    document.body.classList.toggle("choosers-folded", folded);
   }
 
   foldBtn?.addEventListener("click", () => setFolded(!whatPanel.hasAttribute("hidden")));
