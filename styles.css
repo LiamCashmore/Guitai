@@ -935,6 +935,15 @@ input[type="range"]::-moz-range-thumb {
   #kindChips, .what-root { display: none; }
   .what-phone { display: flex; }
   .what-phone-kind { gap: 8px; }
+  /* Sized to its own text in the masthead; here it has a line to itself,
+     so it takes it. The box needs telling as well as its wrapper, or
+     .select-compact pins the box to its text and leaves the chevron out
+     at the far edge with nothing under it — the same thing the drawers
+     had to say. */
+  .what-instrument > .select-compact { flex: 1 1 auto; width: auto; min-width: 0; }
+  .what-instrument .select-compact select { width: 100%; min-width: 0; }
+  /* Before ui.js has moved it in, and again on the way back out. */
+  .what-instrument:empty { display: none; }
   .select-kind { flex: 1 1 auto; }
   .select-kind select {
     font-weight: 700;

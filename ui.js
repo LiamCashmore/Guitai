@@ -317,9 +317,13 @@
          // button it belongs to for a line that only fits one of them.
          "#strumSpeed"]);
 
-      // Which instrument, tuned how.
-      borrow($("sheetSetupBody"),
-        [".masthead .select-compact", ".panel-setup .field", "#tuningEdit"]);
+      // Which instrument — at the head of the choosers, since it is the
+      // one answer the rest of them hang off.
+      borrow($("instrumentRow"), [".masthead .select-compact"]);
+
+      // How it is tuned. Setup keeps the tuning and the pegs: that is
+      // work done to an instrument, not a choice about which to look at.
+      borrow($("sheetSetupBody"), [".panel-setup .field", "#tuningEdit"]);
 
       // Playing the board is the bar's whole job, so whichever of these
       // view.js has decided is showing takes the wide slot.

@@ -84,7 +84,16 @@
 
     <!-- ============ WHAT IS ON THE BOARD ================= -->
     <section class="panel panel-what" id="whatPanel" aria-label="Choose what to show">
-      <!-- The phone's first line: which of the four displays. On a
+      <!-- Phone only, and first, because it is the question above all the
+           others: everything below is a choice about an instrument, and
+           the answers change when the instrument does. It used to sit in
+           the Setup drawer with the tuning, which is where you go to set
+           an instrument UP rather than to pick which one you are looking
+           at. ui.js moves the real menu in here; on a desktop the row is
+           not drawn and it stays in the masthead. -->
+      <div class="what-row what-phone what-instrument" id="instrumentRow"></div>
+
+      <!-- The phone's second line: which of the four displays. On a
            desktop this row is not drawn — the chips below say the same
            thing without opening a menu. -->
       <div class="what-row what-phone what-phone-kind">
