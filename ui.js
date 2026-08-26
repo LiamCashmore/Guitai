@@ -57,10 +57,10 @@
   const syncRoot = chipsFor($("root"), $("rootChips"), "btn chip chip-root");
 
   // ---- Labels ------------------------------------------------
-  // view.js cycles the three modes and lights the button only when the
-  // labels are hidden. Reading a label is the ordinary state and hiding
-  // them is the trick, so it reads better the other way round: names and
-  // degrees are on, nothing is off.
+  // view.js cycles the modes and lights the button only when the labels
+  // are hidden. Reading a label is the ordinary state and hiding them is
+  // the trick, so it reads better the other way round: names, degrees and
+  // fingerings are on, nothing is off.
   const labelsBtn = $("labelsBtn");
   if (labelsBtn) {
     const sync = () => {

@@ -66,6 +66,7 @@ import {
   hasOpenVoicing,
   shellVoicings,
   gripFingering,
+  runFingering,
 } from "./music.js";
 
 import {
@@ -245,17 +246,56 @@ let posIndex = 0;
 
 /**
  * What each marker says. Cycled by one button rather than chosen from a
- * menu, because there are only three answers and the middle one — no
- * label at all — is the one a player wants when they are testing
- * themselves on the shape, so it should be a tap away and not buried.
+ * menu, because there are only a few answers and the last one before the
+ * wrap — no label at all — is the one a player wants when they are
+ * testing themselves on the shape, so it should be a tap away and not
+ * buried.
+ *
+ * Fingerings are the odd one out. A name and a degree are facts about the
+ * note and can always be said; which finger plays it is a fact about a
+ * hand, and only a grip or a run has one. So that mode comes and goes
+ * with the board — see canFinger.
  */
 const LABEL_MODES = [
-  { mode: "note",   text: "Note names",    hint: "Showing note names — tap for scale degrees" },
-  { mode: "degree", text: "Scale degrees", hint: "Showing scale degrees — tap to hide labels" },
-  { mode: "none",   text: "Hidden",        hint: "Labels hidden — tap for note names" },
+  { mode: "note",   text: "Note names",    showing: "Showing note names",    asks: "tap for note names" },
+  { mode: "degree", text: "Scale degrees", showing: "Showing scale degrees", asks: "tap for scale degrees" },
+  { mode: "finger", text: "Fingerings",    showing: "Showing fingerings",    asks: "tap for fingerings" },
+  { mode: "none",   text: "Hidden",        showing: "Labels hidden",         asks: "tap to hide labels" },
 ];
 let labelIndex = 0;
 const labelMode = () => LABEL_MODES[labelIndex].mode;
+
+/**
+ * Is there a hand on the board to name the fingers of?
+ *
+ * A chord or a progression draws a grip, which is nothing but a hand. A
+ * scale draws every note in reach, which is not — until a run is traced
+ * through it, and then the run is the hand.
+ */
+const canFinger = () =>
+  isChordMode() || isProgressionMode() || !!(pathOn && pathResult);
+
+/** The next mode the button can actually offer, skipping any it can't. */
+function nextLabelIndex(from) {
+  let i = from;
+  do i = (i + 1) % LABEL_MODES.length;
+  while (LABEL_MODES[i].mode === "finger" && !canFinger());
+  return i;
+}
+
+/** Put the labels button where the mode actually is. */
+function syncLabelsBtn() {
+  const btn = document.getElementById("labelsBtn");
+  if (!btn) return;
+  const here = LABEL_MODES[labelIndex];
+  btn.textContent = here.text;
+  // Where the tap leads depends on what the board can offer, so the
+  // tooltip is read off the cycle rather than written down beside it.
+  btn.title = `${here.showing} — ${LABEL_MODES[nextLabelIndex(labelIndex)].asks}`;
+  // Hidden is the only one that changes the board rather than what it
+  // says, so it is the only one that reads as switched on.
+  btn.classList.toggle("active", labelMode() === "none");
+}
 
 // The stretch of neck being searched for grips. Chords are always shown
 // one hand-position at a time, so this is simply where that hand is —
@@ -1097,8 +1137,11 @@ function makeNote() {
  * position change moves each marker to the next fret on the same string
  * rather than destroying and recreating it. That is what produces the
  * slide; markers with no counterpart in the new position fade out.
+ *
+ * @param {Map<string, number>} [fingers]  which finger plays each cell,
+ *        when that is what the labels are saying. See paintNotes.
  */
-function renderNotes(grid, mode) {
+function renderNotes(grid, mode, fingers) {
   const wanted = new Map();
   grid.forEach((row, s) => {
     let rank = 0;
@@ -1183,7 +1226,13 @@ function renderNotes(grid, mode) {
 
     // Labels off leaves the marker itself, which is still the whole map:
     // where the notes fall and which of them is the root.
+    //
+    // A note the hand never plays has no finger to name — a chord tone
+    // the grip left out, a scale tone the run goes round — so in that
+    // mode it says nothing, which is also the truthful answer and reads
+    // as the run or the grip standing out from what is merely nearby.
     const text = mode === "none" ? ""
+               : mode === "finger" ? (fingers?.has(at) ? String(fingers.get(at)) : "")
                : mode === "degree" ? want.cell.degree
                : want.cell.name;
     rec.label.textContent = text;
@@ -2750,10 +2799,50 @@ function renderChord(root, type, voicing, ghostRange) {
 // RENDER
 // ============================================================
 
+/**
+ * Which finger plays each note on the board.
+ *
+ * Two different questions with two different answers, because a grip and
+ * a run are two different things for a hand to be doing — voicings.js
+ * lays the fingers on the one, paths.js walks them through the other.
+ * Everything else on the board is a note nobody is playing, and gets no
+ * entry at all.
+ */
+function handFingers() {
+  const grip = isChordMode() || isProgressionMode() ? currentVoicing : null;
+  if (!grip) return pathResult ? runFingering(pathResult.cells) : new Map();
+
+  const out = new Map();
+  // An open string is part of the grip and needs no finger, which is
+  // worth saying — it is why the shape is easy.
+  for (const c of grip.cells) if (c.fret === 0) out.set(`${c.string}:0`, 0);
+  for (const f of gripFingering(grip.cells)?.assign ?? []) {
+    out.set(`${f.string}:${f.fret}`, f.finger);
+  }
+  return out;
+}
+
+/**
+ * Move the notes, saying whatever the labels are currently able to say.
+ *
+ * Called instead of renderNotes because the fingering mode is the one
+ * that can stop being answerable while it is switched on: clear the run
+ * and there is no longer a hand to describe. Rather than blank every
+ * marker on the board, the button drops back to the names it started
+ * with, which is also the only place that can be noticed and said.
+ */
+function paintNotes(grid) {
+  let fingers = null;
+  if (labelMode() === "finger") {
+    if (canFinger()) fingers = handFingers();
+    else { labelIndex = 0; syncLabelsBtn(); }
+  }
+  renderNotes(grid, labelMode(), fingers);
+}
+
 function render({ animate = true } = {}) {
   const root = document.getElementById("root").value;
   const type = document.getElementById("scale").value;
-  const mode = labelMode();
 
   // Chords take their own route: a grip is a set of notes held at once,
   // not a shape to run through, so positions cycle voicings instead.
@@ -2807,7 +2896,7 @@ function render({ animate = true } = {}) {
     anchorFret = winLo;
     showBand(activeBand.lo, activeBand.hi);
     renderWindowHandle();
-    renderNotes(grid, mode);
+    paintNotes(grid);
     renderPathLine({ animate: false });
 
     const posLabel = document.getElementById("posLabel");
@@ -2943,7 +3032,7 @@ function render({ animate = true } = {}) {
     anchorFret = winLo;
     showBand(activeBand.lo, activeBand.hi);
     renderWindowHandle();
-    renderNotes(grid, mode);
+    paintNotes(grid);
     renderPathLine({ animate: false });
 
     const posLabel = document.getElementById("posLabel");
@@ -3059,7 +3148,7 @@ function render({ animate = true } = {}) {
   }
 
   // 5) Move the notes, then trace the run over them.
-  renderNotes(grid, mode);
+  paintNotes(grid);
   renderPathLine({ animate });
   renderWindowHandle();
 
@@ -3396,18 +3485,11 @@ function initControls() {
       syncCagedControls();
       render();
     }));
-  // Note names -> scale degrees -> nothing, and round again.
-  const labelsBtn = document.getElementById("labelsBtn");
-  const syncLabelsBtn = () => {
-    const { text, hint } = LABEL_MODES[labelIndex];
-    labelsBtn.textContent = text;
-    labelsBtn.title = hint;
-    // Hidden is the only one of the three that changes the board rather
-    // than what it says, so it is the only one that reads as switched on.
-    labelsBtn.classList.toggle("active", labelMode() === "none");
-  };
-  labelsBtn.addEventListener("click", () => {
-    labelIndex = (labelIndex + 1) % LABEL_MODES.length;
+  // Note names -> scale degrees -> fingerings -> nothing, and round
+  // again, with the fingerings passed over whenever there is no hand on
+  // the board for them to describe.
+  document.getElementById("labelsBtn").addEventListener("click", () => {
+    labelIndex = nextLabelIndex(labelIndex);
     syncLabelsBtn();
     render();
   });
