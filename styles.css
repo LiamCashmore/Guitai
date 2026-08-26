@@ -492,6 +492,9 @@ button:disabled { opacity: 0.32; cursor: not-allowed; }
 
 /* ---- Sliders ----------------------------------------------- */
 .slider { display: flex; align-items: center; gap: 9px; }
+/* Beside the button it belongs to, the button is the name. On its own
+   in a drawer, under a metronome and a tempo, it needs one. */
+.slider-name { display: none; }
 
 input[type="range"] {
   width: 98px;
@@ -685,32 +688,6 @@ input[type="range"]::-moz-range-thumb {
   gap: 10px;
   flex-wrap: wrap;
 }
-
-/* ---- The folded summary (phone) ---------------------------- */
-.fold-summary {
-  display: none;
-  width: 100%;
-  align-items: center;
-  gap: 10px;
-  min-height: 40px;
-  padding: 0 12px;
-  text-align: left;
-  text-transform: none;
-  letter-spacing: 0;
-}
-.fold-summary[hidden] { display: none !important; }
-.fold-root { color: var(--accent-text); font-weight: 700; flex: none; }
-.fold-scale {
-  flex: 1 1 auto;
-  font-weight: 700;
-  font-size: 12px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.fold-tap { flex: none; }
 
 /* ============================================================
    NOTES ON THE BOARD  (unchanged — the board is view.js's)
@@ -936,11 +913,9 @@ input[type="range"]::-moz-range-thumb {
   #setupBtn { display: none; }
 
   /* The fold is what makes room for the neck. */
+  /* Folded, this chevron is the only way back to the choosers, so it
+     turns to say which way it will go. */
   .btn-fold { display: inline-flex; align-items: center; justify-content: center; }
-  /* `width: 100%` and a margin either side is 100% PLUS the margins, and
-     the two dozen pixels it hangs over by are enough to widen the whole
-     page. Stretching to the column it is in gets the inset for free. */
-  .fold-summary { display: flex; width: auto; margin: 0 12px 8px; }
 
   /* ---- Choosers ---- */
   .panel-what {
@@ -1013,8 +988,21 @@ input[type="range"]::-moz-range-thumb {
   .board-tools #shellField,
   .board-tools #openField { display: none !important; }
 
+  /* The stepper has the strip to itself now, so the position's name —
+     which on a chord runs to "3/4 · C shape · 2nd inversion · open" —
+     gets the width the two buttons beside it used to take. */
   #cagedNav { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; }
-  #capoBtn { margin-left: auto; }
+  /* ...and with nothing to step between there is nothing in it at all,
+     so the band goes rather than sitting empty over the nut. */
+  .board-tools.tools-bare { display: none; }
+
+  /* Positions and Capo, down in the choosers, sharing the line. */
+  .what-hand { gap: 8px; }
+  .what-hand > .btn { flex: 1 1 0; justify-content: center; }
+  /* Before ui.js has moved them in — and on the way back out. An empty
+     row is still a row, and the panel's gap would leave a step in the
+     column where nothing is. */
+  .what-hand:empty { display: none; }
   #cagedBtn, #capoBtn { padding-left: 11px; padding-right: 11px; font-size: 11px; }
 
   /* The one thing on this screen that scrolls, and it scrolls one way:
@@ -1127,6 +1115,15 @@ input[type="range"]::-moz-range-thumb {
   .sheet-body .btn-labels { margin-left: 0; }
   .sheet-body .slider { width: 100%; }
   .sheet-body .slider input[type="range"] { flex: 1 1 auto; width: auto; min-width: 0; }
+  .sheet-body .slider-name {
+    display: inline;
+    flex: none;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent-text);
+  }
   .sheet-body .legend { gap: 10px 16px; font-size: 10px; flex-wrap: wrap; }
   .sheet-body .legend-tip { display: none; }
   /* Two of a kind sit side by side rather than stacking: ghost tones and
@@ -1168,19 +1165,14 @@ input[type="range"]::-moz-range-thumb {
     min-height: 48px;
   }
   .tabbar-primary .btn-quiet { flex: 0 1 auto; min-width: 0; }
-  .tabbar-primary .slider { flex: 0 1 96px; min-width: 0; }
 
-  /* Both at once: a progression can be strummed AND has a run to play,
-     so Clear, the spread and two accent buttons all want the same line.
-     Four things do not fit under a thumb at 360, and left to squeeze
-     they slide over one another. The two that are adjustments rather
-     than actions give their room up — the run is cleared by tapping its
-     notes again, and the spread stays wherever it was last set — and
-     Play and Strum share what is there. */
-  .tabbar-primary.crowded #clearPath,
-  .tabbar-primary.crowded .slider { display: none; }
-  .tabbar-primary .slider input[type="range"] { width: 100%; min-width: 0; }
-  .tabbar-primary .slider .readout { display: none; }
+  /* A guard rather than a case that comes up. Nothing on the board can
+     put both groups in the bar now — a run belongs to a scale, and a
+     scale has no grip to play — but if one ever could, Clear is the one
+     that is an adjustment rather than an action, and a run is cleared by
+     tapping its notes again. The strum's dial used to be in the same
+     argument; it is in the Practice drawer now. */
+  .tabbar-primary.crowded #clearPath { display: none; }
   /* Nothing to play — the slot collapses rather than leaving a gap the
      size of a button. */
   .tabbar-primary:empty { display: none; }

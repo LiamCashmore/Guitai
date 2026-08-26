@@ -123,51 +123,26 @@
 
   // ---- Folding the choosers away (phone) ---------------------
   // A fretboard wants the screen. Once you have chosen what to look at,
-  // the choosers can go, leaving one line that says what is on the board
-  // and puts them back when tapped.
+  // the choosers can go, and the chevron in the masthead brings them
+  // back.
+  //
+  // There used to be a line left behind saying which root and which
+  // scale were on the board. It was the second place on the screen
+  // saying so — the choosers themselves say it, in the menus you change
+  // it with — and it cost the neck a row whichever way the fold was set,
+  // since folded it was the summary and unfolded it was the choosers.
+  // Folding now simply folds.
   const foldBtn = $("foldBtn");
   const whatPanel = $("whatPanel");
-  const summary = $("foldSummary");
-
-  function describe() {
-    const root = $("root");
-    const scale = $("scale");
-    if (!root || !scale) return "";
-    const rootText = root.value || "";
-    const scaleText = scale.options[scale.selectedIndex]?.textContent ?? "";
-    return `${rootText}||${scaleText}`;
-  }
-
-  function paintSummary() {
-    if (!summary) return;
-    const [root, scale] = describe().split("||");
-    summary.innerHTML = "";
-    const r = document.createElement("span");
-    r.className = "fold-root";
-    r.textContent = root;
-    const s = document.createElement("span");
-    s.className = "fold-scale";
-    s.textContent = scale;
-    const t = document.createElement("span");
-    t.className = "fold-tap readout";
-    t.textContent = "tap to change";
-    summary.append(r, s, t);
-  }
 
   function setFolded(folded) {
-    if (!whatPanel || !summary || !foldBtn) return;
+    if (!whatPanel || !foldBtn) return;
     whatPanel.toggleAttribute("hidden", folded);
-    summary.toggleAttribute("hidden", !folded);
     foldBtn.setAttribute("aria-expanded", String(!folded));
     foldBtn.classList.toggle("folded", folded);
-    if (folded) paintSummary();
   }
 
   foldBtn?.addEventListener("click", () => setFolded(!whatPanel.hasAttribute("hidden")));
-  summary?.addEventListener("click", () => setFolded(false));
-  ["root", "scale", "kind"].forEach(id => $(id)?.addEventListener("change", () => {
-    if (summary && !summary.hasAttribute("hidden")) paintSummary();
-  }));
 
   // ============================================================
   // THE PHONE'S SHELL
@@ -322,13 +297,25 @@
       // What the markers say, what else is on the board, and what the
       // colours mean — everything about looking at it rather than
       // playing it.
+      // Positions and Capo come off the strip over the neck and into the
+      // choosers, where the rest of "what am I looking at" already is.
+      // The strip is one line and never more than one — see .board-tools
+      // in the phone block of styles.css — so those two buttons were
+      // costing the position readout most of its room, and the readout
+      // is the half of that strip you actually read while playing.
+      borrow($("handRow"), ["#cagedBtn", "#capoBtn"]);
+
       borrow($("sheetViewBody"), ["#labelsBtn"]);
       pair($("sheetViewBody"), ["#ghostField", "#openField", "#shellField"]);
       borrow($("sheetViewBody"), ["#progEdit", ".board-foot .legend"]);
 
       // Tempo, and the bar it is counted in.
       borrow($("sheetPracticeBody"),
-        ["#metroBtn", ".panel-practice .slider-wide", "#beatReadout", "#practiceExtra"]);
+        ["#metroBtn", ".panel-practice .slider-wide", "#beatReadout", "#practiceExtra",
+         // The strum's speed is a tempo like the metronome's, and it is
+         // set once and left. Under the thumb it was competing with the
+         // button it belongs to for a line that only fits one of them.
+         "#strumSpeed"]);
 
       // Which instrument, tuned how.
       borrow($("sheetSetupBody"),
@@ -354,10 +341,9 @@
   phone.addEventListener("change", layout);
 
   // The menus are filled by view.js after this file runs, so the chips
-  // and the summary are brought up to date once everything is in place.
+  // are brought up to date once everything is in place.
   requestAnimationFrame(() => {
     syncKind?.();
     syncRoot?.();
-    paintSummary();
   });
 })();

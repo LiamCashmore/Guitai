@@ -2320,7 +2320,12 @@ function syncStrumButton() {
   const on = playerKind === "chord" || playerKind === "progression";
   const can = !!currentVoicing && (isChordMode() || walk);
   btn.disabled = !can;
-  btn.textContent = on ? "Stop" : walk ? "Play" : "Strum";
+  // Play, whatever is on the board. A grip is sounded by strumming it
+  // and a progression by running through it, but that is how the button
+  // works rather than what it is for, and having it read "Strum" beside
+  // the run's "Play" put two words on the screen for one idea. The
+  // tooltip still says which it is doing.
+  btn.textContent = on ? "Stop" : "Play";
   btn.classList.toggle("active", on);
   btn.title = !can ? "No grip to play" : on ? "Stop"
     : walk ? "Play the progression through" : "Strum this grip";
@@ -2786,6 +2791,11 @@ function render({ animate = true } = {}) {
     currentBase = voicing;
     currentVoicing = voicing;
     if (playerKind === "chord" && voicingSig(voicing) !== playingSig) stopSound();
+    // Both, and in both branches. A chord and a progression are played
+    // by the strum button; the run's Play belongs to a run and there is
+    // none here, so it has to be told to go — the scale branch's own
+    // call to this is past the return above and never reached.
+    syncPlayButton();
     syncStrumButton();
 
     // The handle slides the neck exactly as it does for chords: it says
@@ -2920,6 +2930,11 @@ function render({ animate = true } = {}) {
     // A strum belongs to the grip it started on; if that grip has moved
     // out from under it, it is no longer describing what's on screen.
     if (playerKind === "chord" && voicingSig(voicing) !== playingSig) stopSound();
+    // Both, and in both branches. A chord and a progression are played
+    // by the strum button; the run's Play belongs to a run and there is
+    // none here, so it has to be told to go — the scale branch's own
+    // call to this is past the return above and never reached.
+    syncPlayButton();
     syncStrumButton();
 
     // Show the stretch being searched, the same band the positions use.
@@ -3122,7 +3137,16 @@ function syncCagedControls() {
           : "CAGED doesn't apply to this scale — showing playable hand positions";
   btn.classList.toggle("active", chords || walk || cagedOn);
   btn.textContent = walk ? "Chords" : chords ? "Voicings" : caged ? "CAGED" : "Positions";
-  nav.style.display = (chords || walk || cagedOn) ? "flex" : "none";
+  const stepping = chords || walk || cagedOn;
+  nav.style.display = stepping ? "flex" : "none";
+  // On a phone the stepper is the only thing left in that strip — the
+  // rest has gone to the choosers and the drawers — so when there is
+  // nothing to step between, the strip is an empty band of padding and
+  // a rule across the top of the neck. Said here rather than guessed at
+  // in CSS, because this is where the answer is already worked out.
+  // Desktop ignores it: the strip still holds the labels button, the
+  // ghost and open toggles and the rest.
+  document.querySelector(".board-tools")?.classList.toggle("tools-bare", !stepping);
 
   // The typing box comes and goes with the progression it belongs to.
   syncProgression();
@@ -3198,7 +3222,14 @@ function syncCagedControls() {
 
   // Strumming is a chord idea too. Leaving chord mode leaves no grip to
   // play, so the button has nothing to refer to.
-  document.getElementById("strumField").style.display = (chords || walk) ? "flex" : "none";
+  const canStrum = chords || walk;
+  document.getElementById("strumField").style.display = canStrum ? "flex" : "none";
+  // On a phone the dial is out of that group and down in the Practice
+  // drawer, where the group's own display no longer reaches it — so it
+  // is told separately, or a scale would come with a strum speed for a
+  // strum it hasn't got. Inside the group, on a desktop, this says the
+  // same thing twice and costs nothing.
+  document.getElementById("strumSpeed").style.display = canStrum ? "" : "none";
   if (!chords) currentVoicing = null;
   syncStrumButton();
 }

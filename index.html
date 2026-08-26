@@ -119,6 +119,14 @@
         <div class="chips chips-root" id="rootChips" role="group" aria-label="Root"></div>
       </div>
 
+      <!-- Phone only. Positions and Capo are things you set once and
+           then leave alone, so on a small screen they belong with the
+           other choices rather than in the strip over the neck, where
+           they were spending a third of the one line that strip gets.
+           ui.js moves the real buttons in here; on a desktop the row is
+           not drawn and they stay where they were. -->
+      <div class="what-row what-phone what-hand" id="handRow"></div>
+
       <div class="field wide" id="progEdit">
         <label for="progInput">Chords</label>
         <input id="progInput" type="text" autocomplete="off" autocapitalize="off"
@@ -127,9 +135,6 @@
       </div>
 
     </section>
-
-    <!-- Phone only: what is on the board, when the choosers are folded. -->
-    <button class="fold-summary" id="foldSummary" type="button" hidden></button>
 
     <!-- ============ THE BOARD ============================ -->
     <section class="panel panel-board" aria-label="Fretboard">
@@ -176,13 +181,20 @@
         </div>
 
         <div class="cluster" id="strumField">
-          <span class="slider">
+          <!-- How fast the strum crosses the strings. An adjustment, not
+               an action: set once and left alone, where the button beside
+               it is pressed every time. On a phone ui.js moves it to the
+               Practice drawer, in with the tempo, and the bar keeps the
+               button. The name only shows there — beside the button it
+               has one already. -->
+          <span class="slider" id="strumSpeed">
+            <span class="slider-name">Strum speed</span>
             <input id="spread" type="range" min="0" max="100" step="5" value="60"
                    aria-label="Strum speed"
                    title="Strum speed — right is one sound, left is note by note" />
             <span id="spreadLabel" class="readout"></span>
           </span>
-          <button id="strumBtn" class="btn btn-accent" type="button">Strum</button>
+          <button id="strumBtn" class="btn btn-accent" type="button">Play</button>
         </div>
       </div>
 
